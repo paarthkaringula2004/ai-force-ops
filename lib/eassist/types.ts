@@ -1,0 +1,22 @@
+export type Json = Record<string, unknown>;
+export type Connection = { id: string; name: string; kind: 'alertmanager'|'servicenow'|'semaphore'|'prometheus'; base_url: string; project_id: string; auth_type: string; username: string; enabled: boolean; state: string; last_error: string; checked_at: string|null; has_secret: boolean; has_webhook: boolean };
+export type RecordItem = { id: string; connection_id: string; kind: string; external_id: string; data: Json; observed_at: string; updated_at: string };
+export type ActivityItem = { id: string; action: string; target: string; detail: string; created_at: string };
+export type SecurityPolicy = {allow_runs:boolean;allow_writes:boolean;allow_deletes:boolean;require_confirmation:boolean;require_https:boolean;max_concurrent:number};
+export type Snapshot = { connections: Connection[]; records: RecordItem[]; activity: ActivityItem[]; operations: (Json & {id:string;connection_id:string;action:string;target:string;state:string})[]; security:SecurityPolicy; revision: string; limits: { records: number; activity: number } };
+export const textValue = (value: unknown): string => value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
+export function object(value: unknown): Json { return value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {}; }
+export function array(value: unknown): Json[] { return Array.isArray(value) ? value.map(object) : []; }
+export const terminalStates = ['success','error','failed','stopped','cancelled'];
+export type Field = { key: string; label: string; type?: 'number'|'textarea'|'password'|'checkbox'|'datetime-local'; required?: boolean; options?: string[]; hint?: string };
+export const resourceFields: Record<string, Field[]> = {
+ templates: [{key:'name',label:'Name',required:true},{key:'app',label:'Application',options:['ansible','bash','terraform','tofu','python','powershell']},{key:'type',label:'Template type',options:['','build','deploy']},{key:'playbook',label:'Playbook / file',required:true},{key:'repository_id',label:'Repository ID',type:'number',required:true},{key:'inventory_id',label:'Inventory ID',type:'number'},{key:'environment_id',label:'Variable group ID',type:'number',required:true},{key:'view_id',label:'Category ID',type:'number'},{key:'description',label:'Description',type:'textarea'}],
+ inventory: [{key:'name',label:'Name',required:true},{key:'type',label:'Type',options:['static','static-yaml','file']},{key:'inventory',label:'Inventory contents / file path',type:'textarea',required:true},{key:'ssh_key_id',label:'SSH key ID',type:'number'},{key:'become_key_id',label:'Privilege escalation key ID',type:'number'}],
+ environment: [{key:'name',label:'Name',required:true},{key:'json',label:'Variables (JSON)',type:'textarea',required:true},{key:'env',label:'Environment variables (JSON)',type:'textarea'}],
+ repositories: [{key:'name',label:'Name',required:true},{key:'git_url',label:'Git URL',required:true},{key:'git_branch',label:'Branch',required:true},{key:'ssh_key_id',label:'Access key ID',type:'number',required:true}],
+ keys: [{key:'name',label:'Name',required:true},{key:'type',label:'Type',options:['none','ssh','login_password']},{key:'login',label:'Login'},{key:'secret',label:'Private key / password',type:'password'}],
+ schedules: [{key:'name',label:'Schedule name'},{key:'template_id',label:'Template ID',type:'number',required:true},{key:'cron_format',label:'Cron expression',required:true,hint:'Executed by the connected automation runner.'},{key:'active',label:'Enabled',type:'checkbox'}],
+ users: [{key:'user_id',label:'Existing automation user ID',type:'number',required:true},{key:'role',label:'Role',options:['owner','manager','task_runner','guest']}],
+ views: [{key:'title',label:'Category name',required:true},{key:'position',label:'Position',type:'number'}],
+ incidents: [{key:'short_description',label:'Short description',required:true},{key:'caller_id',label:'Caller user ID'},{key:'assignment_group',label:'Assignment group ID'},{key:'urgency',label:'Urgency',options:['1','2','3']},{key:'impact',label:'Impact',options:['1','2','3']},{key:'state',label:'State',options:['1','2','3','6','7','8']},{key:'description',label:'Description',type:'textarea'},{key:'close_code',label:'Resolution code'},{key:'close_notes',label:'Resolution notes',type:'textarea'},{key:'work_notes',label:'Work notes',type:'textarea'},{key:'comments',label:'Customer-visible comments',type:'textarea'}],
+};

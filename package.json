@@ -1,0 +1,41 @@
+{
+  "name": "ai-force-ops",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint",
+    "db:migrate": "node scripts/migrate.mjs",
+    "eassist:worker": "node scripts/eassist-worker.mjs",
+    "auth:migrate": "npx auth@latest migrate --yes"
+  },
+  "dependencies": {
+    "@arcjet/next": "^1.14.0",
+    "@base-ui/react": "^1.8.0",
+    "@openai/agents": "^0.18.0",
+    "@xyflow/react": "^12.11.6",
+    "better-auth": "^1.7.7",
+    "dotenv": "^18.0.5",
+    "lucide-react": "^1.47.0",
+    "next": "16.3.8",
+    "openai": "^7.23.0",
+    "pg": "^8.23.1",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4",
+    "@types/node": "^20",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "eslint": "^9",
+    "eslint-config-next": "16.3.8",
+    "tailwindcss": "^4",
+    "typescript": "^5"
+  }
+}
