@@ -41,6 +41,7 @@ const server=createServer(async(req,res)=>{
   if(path==='/api/project/1/tasks'&&req.method==='POST'){
     const id=++launches;result={id,template_id:input.template_id,status:'running'};tasks.set(String(id),result);
   }else if(path.endsWith('/output'))result=[{time:new Date().toISOString(),output:'Fixture runner emitted this output.'}];
+  else if(path.endsWith('/confirm')||path.endsWith('/reject')){const id=path.split('/').at(-2);tasks.set(id,{...tasks.get(id),status:path.endsWith('/confirm')?'running':'rejected'});}
   else if(path.endsWith('/stop')){const id=path.split('/').at(-2);tasks.set(id,{...tasks.get(id),status:'stopped'});}
   else if(path.includes('/tasks/'))result=tasks.get(path.split('/').at(-1))||{};
   else if(path==='/api/project/1/templates/7')result={id:7,name:'Fixture template',app:'ansible'};
@@ -97,6 +98,19 @@ try{
   check(sourceRequests===count,'Disabling launches blocks source execution');
   await action(users[0],{action:'task.stop',connectionId:saved.id,id:launched.id,requestKey:randomUUID()});
   check(tasks.get(launched.id).status==='stopped','Operators can stop existing tasks when new launches are disabled');
+  tasks.set(launched.id,{...tasks.get(launched.id),status:'waiting_confirmation'});
+  const decision=(name,confirmed)=>({action:`task.${name}`,connectionId:saved.id,id:launched.id,confirmed,requestKey:randomUUID()});
+  count=sourceRequests;
+  await rejects(()=>action(users[0],decision('confirm',true)),403);
+  check(sourceRequests===count,'Disabled task actions never reach source confirmation');
+  await policy();
+  await rejects(()=>action(users[0],decision('confirm',false)),400);
+  await action(users[0],decision('confirm',true));
+  check(tasks.get(launched.id).status==='running','Confirmation continues a paused source task');
+  await rejects(()=>action(users[0],decision('confirm',true)),409);
+  tasks.set(launched.id,{...tasks.get(launched.id),status:'waiting_confirmation'});
+  await action(users[0],decision('reject',true));
+  check(tasks.get(launched.id).status==='rejected','Rejection ends a paused source task');
   await policy({allow_writes:false});count=sourceRequests;
   await rejects(()=>action(users[0],{action:'resource.save',connectionId:saved.id,kind:'views',fields:{name:'Blocked category'},requestKey:randomUUID()}),403);
   check(sourceRequests===count,'Write policy is enforced before source mutation');

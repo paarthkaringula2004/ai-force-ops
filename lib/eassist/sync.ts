@@ -85,6 +85,15 @@ export async function syncConnection(c:PrivateConnection,force=false) {
       const result=object(await remote(c,'/api/v1/status/buildinfo'));
       if(result.status!=='success')throw new Error('Prometheus did not return a successful health response.');
       await putRecord(c,'status','current',object(result.data));
+      const targets=object(await remote(c,'/api/v1/targets'));
+      const rules=object(await remote(c,'/api/v1/rules'));
+      const metrics:Json={};
+      for(const [name,query] of Object.entries({up:'up',samples:'scrape_samples_scraped',duration:'scrape_duration_seconds',alerts:'ALERTS'})){
+        const response=object(await remote(c,`/api/v1/query?query=${encodeURIComponent(query)}`));
+        if(response.status!=='success')throw new Error('Prometheus rejected the monitoring query.');
+        metrics[name]=object(response.data).result||[];
+      }
+      await putRecord(c,'monitoring','current',{targets:array(object(targets.data).activeTargets).map(t=>({health:t.health,labels:t.labels,scrapeUrl:t.scrapeUrl,lastScrape:t.lastScrape,lastError:t.lastError,scrapeDuration:t.scrapeDuration})),rules:array(object(rules.data).groups).map(g=>({name:g.name,rules:array(g.rules).map(r=>({name:r.name,state:r.state,health:r.health,query:r.query,lastError:r.lastError}))})),metrics});
     }
     await db.query(`UPDATE eassist_connections SET state='connected',last_error='',checked_at=now(),sync_after=now()+interval '10 seconds',lease_until=NULL WHERE id=$1`,[c.id]);
   }catch(error){

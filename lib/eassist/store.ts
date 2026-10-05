@@ -24,7 +24,7 @@ export async function snapshot(user:string) {
   const revision=await db.query('SELECT revision::text FROM eassist_revisions WHERE user_id=$1',[user]);
   const [connections,records,activity]=await Promise.all([
     db.query(`SELECT id,name,kind,base_url,project_id,auth_type,username,enabled,state,last_error,checked_at,secret_cipher<>'' AS has_secret,webhook_hash IS NOT NULL AS has_webhook FROM eassist_connections WHERE user_id=$1 ORDER BY created_at`,[user]),
-    db.query(`SELECT id,connection_id,kind,external_id,data,observed_at,updated_at FROM eassist_records WHERE user_id=$1 AND kind NOT IN ('output','journal','monitoring') ORDER BY updated_at DESC LIMIT 5000`,[user]),
+    db.query(`SELECT id,connection_id,kind,external_id,data,observed_at,updated_at FROM eassist_records WHERE user_id=$1 AND kind NOT IN ('output','journal') ORDER BY updated_at DESC LIMIT 5000`,[user]),
     db.query('SELECT id,action,target,detail,created_at FROM eassist_activity WHERE user_id=$1 ORDER BY id DESC LIMIT 100',[user]),
   ]);
   const operations=await db.query(`SELECT id,connection_id,action,target,state,created_at,result FROM eassist_operations WHERE user_id=$1 AND state IN ('unknown','pending') ORDER BY created_at DESC LIMIT 100`,[user]);

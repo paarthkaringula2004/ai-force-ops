@@ -7,7 +7,8 @@ export type Snapshot = { connections: Connection[]; records: RecordItem[]; activ
 export const textValue = (value: unknown): string => value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 export function object(value: unknown): Json { return value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {}; }
 export function array(value: unknown): Json[] { return Array.isArray(value) ? value.map(object) : []; }
-export const terminalStates = ['success','error','failed','stopped','cancelled'];
+export const terminalStates = ['success','error','failed','stopped','cancelled','rejected'];
+export function taskStatusLabel(value:unknown){const status=String(value||'');return ({error:'Failed',failed:'Failed',success:'Success',waiting_confirmation:'Waiting confirmation',waiting:'Waiting',starting:'Starting',running:'Running',stopping:'Stopping',stopped:'Stopped',confirmed:'Confirmed',rejected:'Rejected',cancelled:'Cancelled'} as Record<string,string>)[status]||status.replaceAll('_',' ')||'Not launched';}
 export type Field = { key: string; label: string; type?: 'number'|'textarea'|'password'|'checkbox'|'datetime-local'; required?: boolean; options?: string[]; hint?: string };
 export const resourceFields: Record<string, Field[]> = {
  templates: [{key:'name',label:'Name',required:true},{key:'app',label:'Application',options:['ansible','bash','terraform','tofu','python','powershell']},{key:'type',label:'Template type',options:['','build','deploy']},{key:'playbook',label:'Playbook / file',required:true},{key:'repository_id',label:'Repository ID',type:'number',required:true},{key:'inventory_id',label:'Inventory ID',type:'number'},{key:'environment_id',label:'Variable group ID',type:'number',required:true},{key:'view_id',label:'Category ID',type:'number'},{key:'description',label:'Description',type:'textarea'}],

@@ -26,6 +26,8 @@ Do not commit `.env` or share secret key values.
 
 ## Start here
 
+See [ePACE operations and setup](docs/epace.md) for CognitiveConnect, knowledge retrieval, tracing, safety policies, the platform catalog and lifecycle assessments.
+
 1. [Product source baseline](docs/product-baseline.md)
 2. [Phased implementation plan](docs/implementation-plan.md)
 3. [Architecture decision records](docs/decisions/README.md)

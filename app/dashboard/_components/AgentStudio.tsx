@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type ComponentType } from "react";
 import { usePathname } from "next/navigation";
-import Link from "next/link";
 import {
   BookOpen, Box, ChartNoAxesColumnIncreasing, CircleHelp, Expand,
   CreditCard, FileText, Gauge, Menu, Settings, Sparkles, Users, Wrench,
@@ -11,6 +10,7 @@ import AgentManager from "./AgentManager";
 import PlaygroundView from "./PlaygroundView";
 import { WorkspaceSection } from "./WorkspaceSections";
 import WorkspaceUserMenu from "@/components/auth/WorkspaceUserMenu";
+import WorkspaceLink from "@/components/workspace-link";
 import { authClient } from "@/lib/auth-client";
 import { activateWorkspaceApiCache, clearWorkspaceApiData, invalidateWorkspaceApiData, preloadWorkspaceApiData } from "@/lib/workspace-api-cache";
 
@@ -181,7 +181,7 @@ export default function AgentStudio({ initialSection = "Playground" }: { initial
               </button>;
             })}
           </div></nav>
-          <div className={`border-t border-[#e8eaf0] p-4 ${sidebarCollapsed ? "md:px-2" : ""}`}><Link href="/service-review-center" title="Open Service Review Center" className={`group flex items-center gap-3 rounded-xl bg-white p-2.5 transition hover:bg-[#f4f3ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#766ce1] ${sidebarCollapsed ? "md:justify-center md:p-1" : ""}`}><div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#eceaff] text-[10px] font-semibold text-[#594de0] group-hover:bg-[#e4e1ff]">AO</div><div className={sidebarCollapsed ? "md:hidden" : ""}><div className="text-[11px] font-medium text-[#343c49]">AIForce.Ops</div><div className="mt-0.5 text-[10px] text-[#8992a2]">Service Review Center · PostgreSQL</div></div></Link></div>
+          <div className={`border-t border-[#e8eaf0] p-4 ${sidebarCollapsed ? "md:px-2" : ""}`}><WorkspaceLink href="/service-review-center" title="Open Service Review Center" className={`group flex items-center gap-3 rounded-xl bg-white p-2.5 transition hover:bg-[#f4f3ff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#766ce1] ${sidebarCollapsed ? "md:justify-center md:p-1" : ""}`} destination="Review Center"><div className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#eceaff] text-[10px] font-semibold text-[#594de0] group-hover:bg-[#e4e1ff]">AO</div><div className={sidebarCollapsed ? "md:hidden" : ""}><div className="text-[11px] font-medium text-[#343c49]">AIForce.Ops</div><div className="mt-0.5 text-[10px] text-[#8992a2]">Service Review Center · PostgreSQL</div></div></WorkspaceLink></div>
         </aside>
 
         <main className="relative flex min-w-0 flex-1 overflow-hidden bg-white">

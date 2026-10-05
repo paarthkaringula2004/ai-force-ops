@@ -1,15 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Activity, ArrowDownToLine, ArrowLeft, ArrowRight, BookOpenCheck, Bot, Building2,
-  ChartNoAxesCombined, Check, ChevronDown, CircleHelp, ClipboardList, Cloud, Command,
+  ChartNoAxesCombined, ChevronDown, CircleHelp, ClipboardList, Cloud, Command,
   Cpu, ExternalLink, Gauge, Globe2, Layers3, Menu, Moon, Network, Search,
   ShieldCheck, Star, Sun, Workflow, X,
 } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import WorkspaceUserMenu from "@/components/auth/WorkspaceUserMenu";
+import WorkspaceLink from "@/components/workspace-link";
+import WorkspaceTransition from "@/components/workspace-transition";
 
 type View = "services" | "value" | "observability" | "geo" | "aiops" | "executive" | "details";
 type Service = { title: string; short: string; detail: string; icon: typeof Activity; color: string; route: View };
@@ -58,10 +60,43 @@ export default function ServiceReviewCenter() {
   const [selectedService, setSelectedService] = useState(services[0]);
   const [persona, setPersona] = useState("eAssist");
   const [personaOpen, setPersonaOpen] = useState(false);
+  const personaRoot = useRef<HTMLDivElement>(null);
+  const personaTrigger = useRef<HTMLButtonElement>(null);
+  const [destination, setDestination] = useState<"eAssist" | "ePACE" | null>(null);
+  const [isNavigating, startNavigation] = useTransition();
+
+  useEffect(() => {
+    if (!personaOpen) return;
+    function closeOutside(event: Event) {
+      if (event.target instanceof Node && !personaRoot.current?.contains(event.target)) setPersonaOpen(false);
+    }
+    function closeEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setPersonaOpen(false);
+        personaTrigger.current?.focus();
+      }
+    }
+    document.addEventListener("pointerdown", closeOutside);
+    document.addEventListener("focusin", closeOutside);
+    document.addEventListener("keydown", closeEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOutside);
+      document.removeEventListener("focusin", closeOutside);
+      document.removeEventListener("keydown", closeEscape);
+    };
+  }, [personaOpen]);
+
+  function openWorkspace(name: "eAssist" | "ePACE") {
+    if (isNavigating) return;
+    setPersonaOpen(false);
+    setPersona(name);
+    setDestination(name);
+    startNavigation(() => router.push(name === "eAssist" ? "/service-review-center/eassist" : "/service-review-center/epace"));
+  }
   const [mobileNav, setMobileNav] = useState(false);
   const [search, setSearch] = useState("");
   const [country, setCountry] = useState("All");
-  const [clock, setClock] = useState(new Date());
+  const [clock, setClock] = useState<Date | null>(null);
   const [records, setRecords] = useState<ReviewRecord[]>([]);
   const [dataState, setDataState] = useState<"loading" | "connected" | "unavailable">("loading");
   const [checkedAt, setCheckedAt] = useState("");
@@ -138,10 +173,11 @@ export default function ServiceReviewCenter() {
   }
 
   const pageTitle = view === "services" ? "AIForce.Ops Platform" : view === "value" ? "Value Dashboard" : view === "observability" ? "Observability" : view === "geo" ? "Geo Health" : view === "aiops" ? "AI Ops" : view === "executive" ? "Executive Summary" : selectedService.title;
-  const liveLabel = clock.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const liveLabel = clock ? clock.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }) : "—";
   const dataLabel = dataState === "connected" ? `PostgreSQL · ${records.length} readings` : dataState === "unavailable" ? "PostgreSQL unavailable" : "Connecting to PostgreSQL";
 
   return <div className={`flex h-dvh min-h-[580px] flex-col overflow-hidden ${dark ? "bg-[#111a29] text-slate-100" : "bg-[#f4f6fa] text-slate-800"}`}>
+    {isNavigating && destination && <WorkspaceTransition destination={destination} />}
     <header className="relative z-30 flex h-[68px] shrink-0 items-center gap-3 bg-gradient-to-r from-[#5321ae] via-[#3547cf] to-[#2477d6] px-4 text-white shadow-sm sm:px-6">
       <button type="button" aria-label="Toggle menu" onClick={() => setMobileNav((v) => !v)} className="flex size-9 items-center justify-center rounded-lg text-white/80 hover:bg-white/10 md:hidden">{mobileNav ? <X className="size-5"/> : <Menu className="size-5"/>}</button>
       <button type="button" onClick={() => changeView("services")} className="flex items-center gap-3 text-left"><span className="text-[20px] font-semibold tracking-[-.05em]">AIForce.Ops</span><span className="hidden h-8 w-px bg-white/35 sm:block"/><span className="hidden text-[11px] font-medium leading-4 sm:block">SaaS Service<br/>Review Center</span></button>
@@ -149,8 +185,8 @@ export default function ServiceReviewCenter() {
         <span className="hidden items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1.5 text-[10px] sm:inline-flex"><span className="size-1.5 animate-pulse rounded-full bg-emerald-300"/>{dataLabel}</span>
         <button onClick={() => setDark((d) => !d)} title="Toggle appearance" className="flex size-9 items-center justify-center rounded-lg text-white/80 hover:bg-white/10">{dark ? <Sun className="size-4"/> : <Moon className="size-4"/>}</button>
         <button title="Help" className="hidden size-9 items-center justify-center rounded-lg text-white/80 hover:bg-white/10 sm:flex"><CircleHelp className="size-[18px]"/></button>
-        <div className="relative"><button onClick={() => setPersonaOpen((v) => !v)} aria-expanded={personaOpen} className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-left hover:bg-white/10"><span className="flex size-8 items-center justify-center rounded-full border border-white/50 bg-white/15"><Building2 className="size-4"/></span><span className="hidden sm:block"><span className="block max-w-32 truncate text-[11px] font-semibold">{displayName}</span><span className="text-[9px] text-white/75">{persona}</span></span><ChevronDown className="hidden size-3.5 text-white/75 sm:block"/></button>
-          {personaOpen && <div className="absolute right-0 top-12 z-50 w-56 rounded-xl border border-slate-200 bg-white p-1.5 text-slate-700 shadow-xl"><div className="border-b border-slate-100 px-3 py-2"><p className="truncate text-[11px] font-semibold">{displayName}</p><p className="text-[9px] text-slate-400">Change persona view</p></div>{["eAssist", "ePACE"].map((name) => <button key={name} onClick={() => { setPersona(name); setPersonaOpen(false); if (name === "eAssist") router.push("/service-review-center/eassist"); }} className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[11px] hover:bg-slate-50">{name}{persona === name && <Check className="size-3.5 text-indigo-600"/>}</button>)}<div className="my-1 border-t border-slate-100"/><WorkspaceUserMenu/></div>}
+        <div ref={personaRoot} className="relative"><button ref={personaTrigger} type="button" aria-haspopup="true" disabled={isNavigating} onClick={() => setPersonaOpen((v) => !v)} aria-expanded={personaOpen} className="flex items-center gap-2 rounded-xl px-2 py-1.5 text-left hover:bg-white/10"><span className="flex size-8 items-center justify-center rounded-full border border-white/50 bg-white/15"><Building2 className="size-4"/></span><span className="hidden sm:block"><span className="block max-w-32 truncate text-[11px] font-semibold">{displayName}</span><span className="text-[9px] text-white/75">{persona}</span></span><ChevronDown className="hidden size-3.5 text-white/75 sm:block"/></button>
+          {personaOpen && <div className="absolute right-0 top-12 z-50 w-56 rounded-xl border border-slate-200 bg-white p-1.5 text-slate-700 shadow-xl"><div className="border-b border-slate-100 px-3 py-2"><p className="truncate text-[11px] font-semibold">{displayName}</p><p className="text-[9px] text-slate-400">Change persona view</p></div>{(["eAssist", "ePACE"] as const).map((name) => <button key={name} onClick={() => openWorkspace(name)} className="flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-[11px] hover:bg-slate-50">{name}</button>)}<div className="my-1 border-t border-slate-100"/><WorkspaceUserMenu/></div>}
         </div>
       </div>
     </header>
@@ -159,7 +195,7 @@ export default function ServiceReviewCenter() {
       <aside className={`absolute inset-y-0 left-0 z-20 flex w-[238px] flex-col border-r ${dark ? "border-slate-700 bg-[#172235]" : "border-slate-200 bg-white"} transition-transform md:relative md:z-0 md:translate-x-0 ${mobileNav ? "translate-x-0 shadow-2xl" : "-translate-x-full"}`}>
         <div className="border-b border-slate-100 px-4 py-4"><p className="text-[9px] font-semibold uppercase tracking-[.18em] text-slate-400">Workspace</p><div className="mt-2 flex items-center gap-2.5"><div className="flex size-8 items-center justify-center rounded-xl bg-indigo-50 text-indigo-600"><Command className="size-4"/></div><div><p className="text-[11px] font-semibold">AIForce.Ops</p><p className="text-[9px] text-slate-400">Service Review Center</p></div></div></div>
         <nav aria-label="Service Review Center" className="flex-1 space-y-1 overflow-y-auto px-3 py-4">{navItems.map(({ id, name, icon: Icon }) => <button key={id} onClick={() => changeView(id)} aria-current={view === id ? "page" : undefined} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-medium transition ${view === id ? "bg-indigo-50 text-indigo-700" : dark ? "text-slate-300 hover:bg-slate-700/60" : "text-slate-600 hover:bg-slate-50"}`}><Icon className="size-4"/>{name}{view === id && <span className="ml-auto size-1.5 rounded-full bg-indigo-600"/>}</button>)}<div className="my-3 border-t border-slate-100"/><button onClick={() => changeView("geo")} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-medium ${view === "geo" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50"}`}><Globe2 className="size-4"/>Geo health</button><button onClick={() => changeView("details")} className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[11px] font-medium ${view === "details" ? "bg-indigo-50 text-indigo-700" : "text-slate-600 hover:bg-slate-50"}`}><BookOpenCheck className="size-4"/>Service details</button></nav>
-        <div className="border-t border-slate-100 p-3"><div className={`rounded-xl p-3 ${dark ? "bg-slate-800" : "bg-slate-50"}`}><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500"/><p className="text-[10px] font-semibold">AIForce.Ops workspace</p></div><p className="mt-1.5 text-[9px] leading-4 text-slate-400">{dataState === "connected" ? `${records.length} PostgreSQL readings · checked ${checkedAt ? new Date(checkedAt).toLocaleTimeString() : "just now"}` : dataState === "unavailable" ? "PostgreSQL readings unavailable" : "Connecting to PostgreSQL readings…"}</p><button onClick={() => router.push("/dashboard")} className="mt-2 text-[9px] font-medium text-indigo-600 hover:underline">Back to Agent Studio <ArrowRight className="ml-1 inline size-3"/></button></div></div>
+        <div className="border-t border-slate-100 p-3"><div className={`rounded-xl p-3 ${dark ? "bg-slate-800" : "bg-slate-50"}`}><div className="flex items-center gap-2"><span className="size-2 rounded-full bg-emerald-500"/><p className="text-[10px] font-semibold">AIForce.Ops workspace</p></div><p className="mt-1.5 text-[9px] leading-4 text-slate-400">{dataState === "connected" ? `${records.length} PostgreSQL readings · checked ${checkedAt ? new Date(checkedAt).toLocaleTimeString() : "just now"}` : dataState === "unavailable" ? "PostgreSQL readings unavailable" : "Connecting to PostgreSQL readings…"}</p><WorkspaceLink href="/dashboard" destination="Agent Studio" className="mt-2 inline-flex items-center gap-1 text-[9px] font-medium text-indigo-600 hover:underline"><ArrowLeft aria-hidden="true" className="size-3"/>Back to Agent Studio</WorkspaceLink></div></div>
       </aside>
       <main className="min-w-0 flex-1 overflow-y-auto">
         <div className="mx-auto max-w-[1600px] px-4 py-5 sm:px-6 lg:px-8 lg:py-7">

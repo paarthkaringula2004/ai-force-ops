@@ -121,7 +121,9 @@ export async function action(user:string,b:Json):Promise<Json> {
   if(name==='task.output'){
     if(c.kind!=='semaphore')throw new InputError('Select an automation integration.');
     const id=externalId(b.id);await syncTask(c,id);
-    return {task:await recordData(user,c.id,'tasks',id),output:await recordData(user,c.id,'output',id)};
+    const task=await recordData(user,c.id,'tasks',id);
+    const author=task.user_id==null?{}:await recordData(user,c.id,'users',String(task.user_id));
+    return {task:{...task,user_name:task.user_name||author.name||author.username},output:await recordData(user,c.id,'output',id)};
   }
   if(name==='monitor.query'){
     if(c.kind!=='prometheus')throw new InputError('Select a Prometheus integration.');
@@ -173,11 +175,19 @@ export async function action(user:string,b:Json):Promise<Json> {
       await db.query('UPDATE eassist_connections SET sync_after=now() WHERE id=$1',[c.id]);return result;
     });
   }
-  if(name==='task.run'||name==='task.stop'){
+  if(['task.run','task.stop','task.confirm','task.reject'].includes(name)){
     if(c.kind!=='semaphore')throw new InputError('Select an automation integration.');
     const id=externalId(b.id),base=projectPath(c);
     return once(c,b,`${name}/${id}`,async(operationId)=>{
-      if(name==='task.stop'){await remote(c,`${base}/tasks/${id}/stop`,'POST',{});await audit(user,c.id,'Stop requested',id,'Waiting for the runner to confirm termination.');return {id};}
+      if(name==='task.stop'){await remote(c,`${base}/tasks/${id}/stop`,'POST',{force:b.force===true});await audit(user,c.id,'Stop requested',id,'Waiting for the runner to confirm termination.');return {id};}
+      if(name==='task.confirm'||name==='task.reject'){
+        if(!policy.allow_runs)throw new InputError('Task actions are disabled in Security configurations.',403);
+        if(b.confirmed!==true)throw new InputError('Confirm this task action before continuing.');
+        const current=object(await remote(c,`${base}/tasks/${id}`));
+        if(current.status!=='waiting_confirmation')throw new InputError('This task is no longer waiting for confirmation.',409);
+        await remote(c,`${base}/tasks/${id}/${name==='task.confirm'?'confirm':'reject'}`,'POST',{});
+        await syncTask(c,id);return {id};
+      }
       const unresolved=await db.query(`SELECT id FROM eassist_operations WHERE user_id=$1 AND connection_id=$2 AND action='task.run' AND target=$3 AND state IN ('pending','unknown') AND id<>$4`,[user,c.id,`task.run/${id}`,operationId]);
       if(unresolved.rowCount)throw new InputError('A previous launch has an uncertain outcome. Reconcile it from the Activity page before launching this template again.',409);
       await consumeLaunch(user,c.id,id,b.approvalId);
