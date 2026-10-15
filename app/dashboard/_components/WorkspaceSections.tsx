@@ -1,6 +1,7 @@
 "use client";
 
 
+import TokenCalculatorView from "./TokenCalculatorView";
 import PaymentsView from "./PaymentsView";
 import ModelUsageView from "./ModelUsageView";
 import IntegrationCatalog from "./IntegrationCatalog";
@@ -8,7 +9,7 @@ import ProjectToolCatalog from "./ProjectToolCatalog";
 import ToolLibraryKnowledge from "./ToolLibraryKnowledge";
 import MarkdownEditor from "@/app/service-review-center/epace/markdown-editor";
 import ThemedSelect from "@/components/themed-select";
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { ArrowDownToLine, Check, LoaderCircle, LockKeyhole, Plus, RefreshCw, ShieldCheck, Sparkles, Trash2, Wrench } from "lucide-react";
 import { authClient } from "@/lib/auth-client";
 import { getWorkspaceApiData } from "@/lib/workspace-api-cache";
@@ -75,17 +76,6 @@ function KnowledgeView() {
 }
 
 function UsageView() { return <ModelUsageView />; }
-
-function TokenCalculatorView() {
-  const [input, setInput] = useState(""); const [output, setOutput] = useState(""); const [loaded, setLoaded] = useState(false); const [saveState, setSaveState] = useState<"loading" | "saved" | "saving" | "error">("loading"); const initialized = useRef(false);
-  const estimate = (text: string) => text.trim() ? Math.ceil(text.trim().length / 4) : 0;
-  useEffect(() => { const controller = new AbortController(); fetch("/api/token-calculator/state", { cache: "no-store", signal: controller.signal }).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); return data as { input: string; output: string }; }).then((data) => { setInput(data.input); setOutput(data.output); setSaveState("saved"); initialized.current = true; }).catch(() => { if (!controller.signal.aborted) setSaveState("error"); }).finally(() => { if (!controller.signal.aborted) setLoaded(true); }); return () => controller.abort(); }, []);
-  useEffect(() => { if (!loaded || !initialized.current) return; setSaveState("saving"); const controller = new AbortController(); const timer = window.setTimeout(() => { fetch("/api/token-calculator/state", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ input, output }), signal: controller.signal }).then(async (response) => { const data = await response.json(); if (!response.ok) throw new Error(data.error); setSaveState("saved"); }).catch(() => { if (!controller.signal.aborted) setSaveState("error"); }); }, 500); return () => { window.clearTimeout(timer); controller.abort(); }; }, [input, output, loaded]);
-  return <div className="mx-auto w-full max-w-[1050px] p-5 sm:p-8"><PageHeading eyebrow="Planning tool" title="Token Calculator" description="Estimate token size before a run, then compare it with recorded provider usage in the Usage page." action={<span role="status" className={`text-[10px] ${saveState === "error" ? "text-rose-600" : "text-[#8992a2]"}`}>{saveState === "loading" ? "Loading saved calculator…" : saveState === "saving" ? "Saving to PostgreSQL…" : saveState === "error" ? "Could not save · check connection" : "Saved to PostgreSQL"}</span>} />
-    <div className="grid gap-4 lg:grid-cols-2"><section className={`${shellCard} p-5`}><Field label="Prompt or input"><textarea value={input} onChange={(e) => setInput(e.currentTarget.value)} rows={10} placeholder="Paste the prompt or context you want to estimate…" className="w-full resize-y rounded-xl border border-[#dfe2e9] p-3 text-[12px] leading-5 text-[#374151] outline-none focus:border-[#a9a2f2] focus:ring-3 focus:ring-[#6255e8]/10" /><p className="mt-2 text-right text-[10px] text-[#7e8797]">~{estimate(input).toLocaleString()} tokens</p></Field></section><section className={`${shellCard} p-5`}><Field label="Expected response"><textarea value={output} onChange={(e) => setOutput(e.currentTarget.value)} rows={10} placeholder="Optionally describe the expected response size…" className="w-full resize-y rounded-xl border border-[#dfe2e9] p-3 text-[12px] leading-5 text-[#374151] outline-none focus:border-[#a9a2f2] focus:ring-3 focus:ring-[#6255e8]/10" /><p className="mt-2 text-right text-[10px] text-[#7e8797]">~{estimate(output).toLocaleString()} tokens</p></Field></section></div>
-    <div className="mt-4 grid gap-4 sm:grid-cols-3"><div className={`${shellCard} p-5`}><p className="text-[10px] text-[#7e8797]">Estimated input</p><p className="mt-2 text-2xl font-semibold text-[#252c38]">~{estimate(input).toLocaleString()}</p></div><div className={`${shellCard} p-5`}><p className="text-[10px] text-[#7e8797]">Estimated output</p><p className="mt-2 text-2xl font-semibold text-[#252c38]">~{estimate(output).toLocaleString()}</p></div><div className={`${shellCard} border-[#dedbff] bg-[#faf9ff] p-5`}><p className="text-[10px] text-[#7168cc]">Estimated total</p><p className="mt-2 text-2xl font-semibold text-[#5048bd]">~{(estimate(input) + estimate(output)).toLocaleString()}</p></div></div><p className="mt-4 rounded-xl border border-amber-100 bg-amber-50/70 p-3.5 text-[10px] leading-5 text-amber-900/75">This is a rough character-based estimate (~4 characters per token), not an exact tokenizer. Actual usage varies by model, language, and formatting. Pricing has not been configured.</p>
-  </div>;
-}
 
 
 function GeneralInstructionsView() {
