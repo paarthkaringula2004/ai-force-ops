@@ -1,79 +1,80 @@
-import { randomUUID } from "node:crypto";
-import { db } from "@/lib/db";
-import { getRequestSession } from "@/lib/request-session";
-import { purgeExpiredAgentTrash } from "@/lib/agent-trash";
-
-export const runtime = "nodejs";
-
-type AgentRow = {
-  id: string;
-  name: string;
-  purpose: string;
-  modelId: string;
-  instructions: string;
-  createdAt: Date;
-  updatedAt: Date;
-  deletedAt?: Date | null;
-  purgeAt?: Date | null;
-};
-
-function parseAgentInput(value: unknown) {
-  if (typeof value !== "object" || value === null) return null;
-  const row = value as Record<string, unknown>;
-  const name = typeof row.name === "string" ? row.name.trim() : "";
-  const purpose = typeof row.purpose === "string" ? row.purpose.trim() : "";
-  const modelId = typeof row.modelId === "string" ? row.modelId.trim() : "";
-  const instructions = typeof row.instructions === "string" ? row.instructions.trim() : "";
-  if (!name || name.length > 64 || purpose.length > 2000 || modelId.length > 200 || instructions.length > 12000) return null;
-  return { name, purpose, modelId, instructions };
-}
-
-function serializeAgent(row: AgentRow) {
-  return {
-    ...row,
-    createdAt: row.createdAt.toISOString(),
-    updatedAt: row.updatedAt.toISOString(),
-    deletedAt: row.deletedAt?.toISOString() ?? null,
-    purgeAt: row.purgeAt?.toISOString() ?? null,
-  };
-}
-
-export async function GET(request: Request) {
-  const session = await getRequestSession(request);
-  if (!session?.user) return Response.json({ error: "Sign in to view agents." }, { status: 401 });
-
-  try {
-    await purgeExpiredAgentTrash();
-    const inBin = new URL(request.url).searchParams.get("view") === "bin";
-    const result = await db.query<AgentRow>(
-      `SELECT id, name, purpose, model_id AS "modelId", instructions,
-              created_at AS "createdAt", updated_at AS "updatedAt", deleted_at AS "deletedAt",
-              deleted_at + interval '30 days' AS "purgeAt"
-       FROM agents WHERE user_id = $1 AND (($2::boolean AND deleted_at IS NOT NULL) OR (NOT $2::boolean AND deleted_at IS NULL))
-       ORDER BY COALESCE(deleted_at, updated_at) DESC`,
-      [session.user.id, inBin],
-    );
-    return Response.json({ userId: session.user.id, view: inBin ? "bin" : "active", agents: result.rows.map(serializeAgent) });
-  } catch {
-    return Response.json({ error: "Could not load agents from PostgreSQL." }, { status: 503 });
-  }
-}
-
-export async function POST(request: Request) {
-  const session = await getRequestSession(request);
-  if (!session?.user) return Response.json({ error: "Sign in to create an agent." }, { status: 401 });
-
-  try {
-    const input = parseAgentInput(await request.json());
-    if (!input) return Response.json({ error: "Enter an agent name and check the field lengths." }, { status: 400 });
-    const result = await db.query<AgentRow>(
-      `INSERT INTO agents (id, user_id, name, purpose, model_id, instructions)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       RETURNING id, name, purpose, model_id AS "modelId", instructions, created_at AS "createdAt", updated_at AS "updatedAt"`,
-      [randomUUID(), session.user.id, input.name, input.purpose, input.modelId, input.instructions],
-    );
-    return Response.json({ agent: serializeAgent(result.rows[0]) }, { status: 201 });
-  } catch {
-    return Response.json({ error: "Could not save the agent to PostgreSQL." }, { status: 503 });
-  }
-}
+import { randomUUID } from "node:crypto";
+import { db } from "@/lib/db";
+import { getRequestSession } from "@/lib/request-session";
+import { purgeExpiredAgentTrash } from "@/lib/agent-trash";import { studioGraph } from "@/lib/agent-studio-graph";import { normalizeWorkflowGraph } from "@/lib/workflow-graph";import { requireSameOrigin } from "@/lib/service-review/ingestion";import { workspaceAccess } from "@/lib/workspace-access";import { permitted } from "@/lib/workspace-permissions";
+
+export const runtime = "nodejs";
+
+type AgentRow = {
+  id: string;
+  name: string;
+  purpose: string;
+  modelId: string;
+  instructions: string;
+  createdAt: Date;
+  updatedAt: Date;
+  deletedAt?: Date | null;
+  purgeAt?: Date | null;
+};
+
+function parseAgentInput(value: unknown) {
+  if (typeof value !== "object" || value === null) return null;
+  const row = value as Record<string, unknown>;
+  const name = typeof row.name === "string" ? row.name.trim() : "";
+  const purpose = typeof row.purpose === "string" ? row.purpose.trim() : "";
+  const modelId = typeof row.modelId === "string" ? row.modelId.trim() : "";
+  const instructions = typeof row.instructions === "string" ? row.instructions.trim() : "";
+  if (!name || name.length > 64 || purpose.length > 2000 || modelId.length > 200 || instructions.length > 12000) return null;
+  if (row.workflowMode !== undefined && !["actual", "super"].includes(String(row.workflowMode))) return null;  return { name, purpose, modelId, instructions, workflowMode: row.workflowMode };
+}
+
+function serializeAgent(row: AgentRow) {
+  return {
+    ...row,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+    deletedAt: row.deletedAt?.toISOString() ?? null,
+    purgeAt: row.purgeAt?.toISOString() ?? null,
+  };
+}
+
+export async function GET(request: Request) {
+  const session = await getRequestSession(request);
+  if (!session?.user) return Response.json({ error: "Sign in to view agents." }, { status: 401 });
+
+  try {
+    await purgeExpiredAgentTrash();
+    const inBin = new URL(request.url).searchParams.get("view") === "bin";
+    const result = await db.query<AgentRow>(
+      `SELECT id, name, purpose, model_id AS "modelId", instructions,
+              created_at AS "createdAt", updated_at AS "updatedAt", deleted_at AS "deletedAt",
+              deleted_at + interval '30 days' AS "purgeAt"
+       FROM agents WHERE user_id = $1 AND (($2::boolean AND deleted_at IS NOT NULL) OR (NOT $2::boolean AND deleted_at IS NULL))
+       ORDER BY CASE WHEN NOT $2::boolean THEN (SELECT position.ordinal FROM agent_card_orders o CROSS JOIN LATERAL jsonb_array_elements_text(o.agent_ids) WITH ORDINALITY AS position(agent_id,ordinal) WHERE o.user_id=$1 AND position.agent_id=agents.id::text) END ASC NULLS LAST, COALESCE(deleted_at, updated_at) DESC`,
+      [session.user.id, inBin],
+    );
+    const order = await db.query("SELECT updated_at FROM agent_card_orders WHERE user_id=$1", [session.user.id]);
+    return Response.json({ orderSavedAt: order.rows[0]?.updated_at ?? null, userId: session.user.id, view: inBin ? "bin" : "active", agents: result.rows.map(serializeAgent) });
+  } catch {
+    return Response.json({ error: "Could not load agents from PostgreSQL." }, { status: 503 });
+  }
+}
+
+export async function POST(request: Request) {
+  const session = await getRequestSession(request);
+  if (!session?.user) return Response.json({ error: "Sign in to create an agent." }, { status: 401 });  if (!permitted(await workspaceAccess(session.user.id), "agent_studio")) return Response.json({ error: "Agent Studio access required." }, { status: 403 });  try { requireSameOrigin(request); } catch { return Response.json({ error: "Invalid origin." }, { status: 403 }); }
+
+  try {
+    const input = parseAgentInput(await request.json());
+    if (!input) return Response.json({ error: "Enter an agent name and check the field lengths." }, { status: 400 });
+    const client = await db.connect();    try {    await client.query("BEGIN");    const result = await client.query<AgentRow>(
+      `INSERT INTO agents (id, user_id, name, purpose, model_id, instructions)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       RETURNING id, name, purpose, model_id AS "modelId", instructions, created_at AS "createdAt", updated_at AS "updatedAt"`,
+      [randomUUID(), session.user.id, input.name, input.purpose, input.modelId, input.instructions],
+    );
+    if (input.workflowMode) {      const graph = studioGraph(input.name, input.modelId || "gpt-4.1-mini", input.instructions);      graph.nodes[0].data.workflowMode = input.workflowMode;      if (input.workflowMode === "actual") {        graph.nodes = graph.nodes.filter(n => n.type === "StartNode");        graph.edges = [];        graph.nodes[0].data.label = "Start";      }      const normalized = normalizeWorkflowGraph(graph.nodes, graph.edges);      await client.query("INSERT INTO agent_workflows(user_id,agent_id,graph) VALUES($1,$2,$3::jsonb)",[session.user.id,result.rows[0].id,JSON.stringify(normalized)]);    }    await client.query("COMMIT");    return Response.json({ agent: serializeAgent(result.rows[0]) }, { status: 201 });    } catch (error) { await client.query("ROLLBACK"); throw error; } finally { client.release(); }
+  } catch {
+    return Response.json({ error: "Could not save the agent to PostgreSQL." }, { status: 503 });
+  }
+}

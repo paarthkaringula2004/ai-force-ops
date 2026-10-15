@@ -12,7 +12,7 @@ export function normalizeWorkflowGraph(nodes: unknown[], edges: unknown[]): Work
     type: "StartNode",
     draggable: false,
     deletable: false,
-    data: { ...(existingStart?.data ?? {}), label: "Start" },
+    data: { ...(existingStart?.data ?? {}), label: existingStart?.data?.label || "Info" },
   };
   const nextNodes = [start, ...filtered.filter((node) => node !== existingStart && node.id !== "start" && node.type !== "StartNode")];
   const ids = new Set(nextNodes.map((node) => node.id));

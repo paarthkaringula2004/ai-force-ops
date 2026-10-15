@@ -1,13 +1,14 @@
 import { db } from '@/lib/db';
 import { InputError } from './transport';
+import { organizationOwner } from '@/lib/organization';
 export const defaultSecurity={allow_runs:true,allow_writes:true,allow_deletes:false,require_confirmation:true,require_https:true,max_concurrent:3};
 export type SecurityPolicy=typeof defaultSecurity;
-export async function securityPolicy(user:string):Promise<SecurityPolicy>{return (await db.query('SELECT allow_runs,allow_writes,allow_deletes,require_confirmation,require_https,max_concurrent FROM eassist_security WHERE user_id=$1',[user])).rows[0]||defaultSecurity;}
+export async function securityPolicy(user:string):Promise<SecurityPolicy>{const owner=await organizationOwner();return (await db.query('SELECT allow_runs,allow_writes,allow_deletes,require_confirmation,require_https,max_concurrent FROM eassist_security WHERE user_id=$1',[owner||user])).rows[0]||defaultSecurity;}
 export async function consumeLaunch(user:string,connectionId:string,templateId:string,approval:unknown){
   const client=await db.connect();
   try{
     await client.query('BEGIN');await client.query('SELECT pg_advisory_xact_lock(hashtext($1))',[`eassist-launch:${user}`]);
-    const policy=(await client.query('SELECT * FROM eassist_security WHERE user_id=$1',[user])).rows[0]||defaultSecurity;
+    const policy=await securityPolicy(user);
     if(!policy.allow_runs)throw new InputError('Task launches are disabled in Security configurations.',403);
     const count=await client.query(`SELECT (SELECT count(*) FROM eassist_records WHERE user_id=$1 AND kind='tasks' AND data->>'status' IN ('waiting','running','starting','stopping')) +
       (SELECT count(*) FROM eassist_operations WHERE user_id=$1 AND action='task.run' AND state IN ('pending','unknown')) AS total`,[user]);

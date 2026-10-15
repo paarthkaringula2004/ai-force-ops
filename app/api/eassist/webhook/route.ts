@@ -1,3 +1,4 @@
+import { importConnection } from '@/lib/service-review/bridge';
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { db } from '@/lib/db';
 import { boundedJson, type PrivateConnection } from '@/lib/eassist/transport';
@@ -15,6 +16,7 @@ export async function POST(request:Request){
     const body=object(await boundedJson(request));if(!Array.isArray(body.alerts)||body.alerts.length>1000)throw new Error('Invalid alerts.');
     const alerts=array(body.alerts);if(alerts.some(a=>!Object.keys(object(a.labels)).length||!Number.isFinite(Date.parse(String(a.startsAt)))))throw new Error('Invalid alert fields.');
     await ingestAlerts(c,alerts,String(body.receiver||''));
+    await importConnection(c);
     return Response.json({accepted:alerts.length});
   }catch{return Response.json({error:'Webhook must contain at most 1,000 alerts with labels and startsAt timestamps.'},{status:400});}
 }

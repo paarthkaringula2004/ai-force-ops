@@ -1,5 +1,6 @@
 "use client";
 
+import StudioSettings from "./StudioSettings";
 import { X } from "lucide-react";
 import type { WorkflowNode } from "@/types/workflow";
 import AgentSettings from "@/app/agent-builder/_nodeSettings/AgentSettings";
@@ -9,7 +10,8 @@ import IfElseSettings from "@/app/agent-builder/_nodeSettings/IfElseSettings";
 import UserApproval from "@/app/agent-builder/_nodeSettings/UserApproval";
 import WhileSettings from "@/app/agent-builder/_nodeSettings/WhileSettings";
 
-export default function SettingPanel({ node, onClose, onChange }: {
+export default function SettingPanel({ node, onClose, onChange, connectedModel = false }: {
+  connectedModel?: boolean;
   node: WorkflowNode | null;
   onClose: () => void;
   onChange: (id: string, updates: Partial<WorkflowNode["data"]>) => void;
@@ -18,7 +20,8 @@ export default function SettingPanel({ node, onClose, onChange }: {
   const update = (updates: Partial<WorkflowNode["data"]>) => node && onChange(node.id, updates);
   let settings = <div className="rounded-xl border border-dashed border-[#e0e4ec] bg-[#fafbfc] p-4 text-[10px] leading-5 text-[#7f8999]">Select a node on the canvas to edit its settings. Drag nodes from AI Agent Tools to add a step.</div>;
 
-  if (node?.type === "AgentNode") settings = <AgentSettings key={node.id} data={node.data} onChange={update} />;
+  if (node && ["ModelNode", "MemoryNode", "ToolsNode", "AgentsNode", "ReferenceNode"].includes(node.type!)) settings = <><StudioSettings type={node.type!} data={node.data} onChange={update} />{node.data.referenceKind === "tool" && <div className="mt-6"><ApiSettings authOnly key={node.id} data={node.data} onChange={update} /></div>}</>;
+  else if (node?.type === "AgentNode") settings = <AgentSettings connectedModel={connectedModel} key={node.id} data={node.data} onChange={update} />;
   else if (node?.type === "ApiNode") settings = <ApiSettings key={node.id} data={node.data} onChange={update} />;
   else if (node?.type === "IfElseNode") settings = <IfElseSettings data={node.data} onChange={update} />;
   else if (node?.type === "WhileNode") settings = <WhileSettings data={node.data} onChange={update} />;

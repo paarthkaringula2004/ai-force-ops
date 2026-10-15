@@ -1,3 +1,9 @@
+import {sharedOperationsOwner} from './organization-context';
+import {changeOrganizationAlert} from './organization-alerts';
+import { organizationOwner } from '@/lib/organization';
+import { workspaceAccess } from "@/lib/workspace-access";
+import { permitted } from "@/lib/workspace-permissions";
+import { acknowledgePlatformAlert } from "./platform";
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { db } from '@/lib/db';
 import { connection, audit, putRecord, recordData } from './store';
@@ -57,12 +63,17 @@ async function once(c:PrivateConnection,b:Json,target:string,fn:(operationId:str
   }
 }
 export async function action(user:string,b:Json):Promise<Json> {
+  if(!permitted(await workspaceAccess(user), "integrations"))throw new InputError("Integration access is required.",403);
   const name=String(b.action||'');
+  if(name==='platform.acknowledge')return acknowledgePlatformAlert(user,uuid(b.id));
+  if(name==='platform.resolve'){if(!(await securityPolicy(user)).allow_writes)throw new InputError('Alert changes are disabled by organization policy.',403);return changeOrganizationAlert(user,uuid(b.id),'resolved',str(b.note,2000));}
+  user=await sharedOperationsOwner(user);
   if(name==='security.save'){
+    if(!permitted(await workspaceAccess(user), 'security'))throw new InputError('Security access is required.',403);
     const p=object(b.policy);for(const k of ['allow_runs','allow_writes','allow_deletes','require_confirmation','require_https'])if(typeof p[k]!=='boolean')throw new InputError('Invalid security configuration.');
     const max=Number(p.max_concurrent);if(!Number.isInteger(max)||max<1||max>20)throw new InputError('Concurrent runs must be between 1 and 20.');
     await db.query(`INSERT INTO eassist_security(user_id,allow_runs,allow_writes,allow_deletes,require_confirmation,require_https,max_concurrent) VALUES($1,$2,$3,$4,$5,$6,$7)
-      ON CONFLICT(user_id) DO UPDATE SET allow_runs=EXCLUDED.allow_runs,allow_writes=EXCLUDED.allow_writes,allow_deletes=EXCLUDED.allow_deletes,require_confirmation=EXCLUDED.require_confirmation,require_https=EXCLUDED.require_https,max_concurrent=EXCLUDED.max_concurrent,updated_at=now()`,[user,p.allow_runs,p.allow_writes,p.allow_deletes,p.require_confirmation,p.require_https,max]);
+      ON CONFLICT(user_id) DO UPDATE SET allow_runs=EXCLUDED.allow_runs,allow_writes=EXCLUDED.allow_writes,allow_deletes=EXCLUDED.allow_deletes,require_confirmation=EXCLUDED.require_confirmation,require_https=EXCLUDED.require_https,max_concurrent=EXCLUDED.max_concurrent,updated_at=now()`,[await organizationOwner()||user,p.allow_runs,p.allow_writes,p.allow_deletes,p.require_confirmation,p.require_https,max]);
     await audit(user,null,'Security configuration updated','',JSON.stringify(p));return {ok:true};
   }
   const policy=await securityPolicy(user);
@@ -102,7 +113,7 @@ export async function action(user:string,b:Json):Promise<Json> {
     if(!policy.allow_runs)throw new InputError('Task launches are disabled in Security configurations.',403);
     const id=randomUUID();await db.query('INSERT INTO eassist_run_approvals(id,user_id,connection_id,template_id) VALUES($1,$2,$3,$4)',[id,user,c.id,externalId(b.id)]);await audit(user,c.id,'Task launch confirmed',String(b.id));return {approvalId:id};
   }
-  if(name==='connection.test'){await syncConnection(c,true);return {ok:true};}
+  if(name==='connection.test'){const result=await syncConnection(c,true);if(!result.ok)throw new InputError(result.reason==='busy_or_disabled'?'The connection is disabled or a synchronization is already running. Enable it and retry after the current check completes.':'Connection verification failed. Review the integration error, credentials, allowed origin and source permissions.',result.reason==='busy_or_disabled'?409:502);return {ok:true,verifiedAt:new Date().toISOString()};}
   if(name==='connection.token'){
     if(c.kind!=='alertmanager')throw new InputError('Webhook tokens are available for Alertmanager.');
     const token=randomBytes(32).toString('hex');await db.query('UPDATE eassist_connections SET webhook_hash=$2 WHERE id=$1',[c.id,createHash('sha256').update(token).digest('hex')]);await audit(user,c.id,'Webhook credential rotated');return {token};

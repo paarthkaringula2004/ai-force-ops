@@ -1,0 +1,47 @@
+{
+  "checkedAt": "2026-10-12T16:11:43.118Z",
+  "scope": "Isolated loopback-only fixture; not an application vulnerability assessment",
+  "zapVersion": "2.17.0",
+  "productionBaseline": {
+    "xssFindings": 0,
+    "observations": 18,
+    "coverage": [
+      {
+        "tool": "ZAP",
+        "version": "2.17.0",
+        "status": "Completed",
+        "detail": "Passive response checks on 9 configured public GET routes at http://127.0.0.1:56329. Redirects are not followed. Login-protected pages, active XSS/injection tests, business logic, and external services were not tested."
+      }
+    ]
+  },
+  "controls": [
+    {
+      "path": "/vulnerable",
+      "expectedVulnerable": true,
+      "detected": true,
+      "findings": [
+        {
+          "rule": "40012",
+          "title": "Cross Site Scripting (Reflected)",
+          "risk": "High",
+          "confidence": "Medium",
+          "parameter": "q",
+          "cwe": "79"
+        }
+      ]
+    },
+    {
+      "path": "/safe",
+      "expectedVulnerable": false,
+      "detected": false,
+      "findings": []
+    }
+  ],
+  "requests": {
+    "total": 31,
+    "unsafe": 20,
+    "safe": 11
+  },
+  "conclusion": "The installed ZAP active rule detects reflected XSS, but the current project passive baseline does not exercise that rule. These controls do not establish whether AIForce.Ops contains XSS.",
+  "source": "https://www.zaproxy.org/docs/alerts/40012/"
+}

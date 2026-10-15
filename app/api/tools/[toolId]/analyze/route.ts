@@ -1,4 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { tokenDetails } from "@/lib/model-pricing";
+import { recordModelUsage } from "@/lib/model-usage";
+import { startPlatformRun, finishPlatformRun } from "@/lib/eassist/platform";
 import OpenAI from "openai";
 import { protectOpenAiRequest } from "@/config/Arcjet";
 import { db } from "@/lib/db";
@@ -17,6 +19,7 @@ export async function POST(request: Request, context: Context) {
   if (blocked) return blocked;
   const key = process.env.OPENAI_API_KEY;
   if (!key) return Response.json({ error: "Tool analysis requires the server OpenAI key." }, { status: 503 });
+  let executionId: string | undefined;
   try {
     const body: unknown = await request.json();
     let model = body && typeof body === "object" && typeof (body as Record<string, unknown>).model === "string" ? ((body as Record<string, unknown>).model as string).trim() : "";
@@ -29,6 +32,7 @@ export async function POST(request: Request, context: Context) {
       `SELECT id, name, purpose, method FROM tools WHERE user_id = $1 AND id = $2`, [session.user.id, toolId]);
     const tool = result.rows[0];
     if (!tool) return Response.json({ error: "Tool not found." }, { status: 404 });
+    executionId = await startPlatformRun(session.user.id,"agent-studio",toolId);
     const client = new OpenAI({ apiKey: key });
     const response = await client.chat.completions.create({
       model,
@@ -47,7 +51,8 @@ export async function POST(request: Request, context: Context) {
        ON CONFLICT (user_id, tool_id) DO UPDATE SET summary=EXCLUDED.summary, operations=EXCLUDED.operations, model_id=EXCLUDED.model_id, analyzed_at=now()
        RETURNING summary, operations, model_id AS "modelId", analyzed_at AS "analyzedAt"`,
       [session.user.id, toolId, summary, JSON.stringify(operations), model]);
-    if (response.usage) await db.query(`INSERT INTO usage_events (id,user_id,source,model_id,input_tokens,output_tokens,total_tokens) VALUES ($1,$2,'tool-analysis',$3,$4,$5,$6)`, [randomUUID(), session.user.id, model, response.usage.prompt_tokens, response.usage.completion_tokens, response.usage.total_tokens]);
+    if (response.usage) await recordModelUsage(session.user.id,"tool-analysis",{modelId:response.model,inputTokens:response.usage.prompt_tokens,outputTokens:response.usage.completion_tokens,totalTokens:response.usage.total_tokens,...tokenDetails(response.usage.prompt_tokens_details),serviceTier:response.service_tier});
+    await finishPlatformRun(session.user.id,executionId,true);
     return Response.json({ knowledge: saved.rows[0], boundary: "Generated from tool name, declared purpose, and method only. No endpoint request or secret was sent." });
-  } catch { return Response.json({ error: "Tool analysis failed. Check the server key, selected model, and tool details." }, { status: 502 }); }
+  } catch (error) { if(executionId) await finishPlatformRun(session.user.id,executionId,false,error).catch(()=>{}); return Response.json({ error: "Tool analysis failed. Check the server key, selected model, and tool details." }, { status: 502 }); }
 }

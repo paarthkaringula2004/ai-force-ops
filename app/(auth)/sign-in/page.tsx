@@ -3,11 +3,13 @@ import { redirect } from "next/navigation";
 import AuthForm from "@/components/auth/AuthForm";
 import { getCurrentSession } from "@/lib/request-session";
 import { cookies } from "next/headers";
+import {googleSignInConfigured,googleAuthError} from '@/lib/google-auth';
 
 export const metadata: Metadata = { title: "Sign in" };
 
-export default async function SignInPage() {
+export default async function SignInPage({searchParams}:{searchParams:Promise<{error?:string}>}) {
   if ((await getCurrentSession())?.user) redirect("/dashboard");
   const choice = (await cookies()).get("aiforce_cookie_choice")?.value;
-  return <AuthForm mode="sign-in" initialCookieChoice={choice === "required" || choice === "declined" ? choice : "pending"} />;
+  const params=await searchParams;
+  return <AuthForm mode="sign-in" googleEnabled={googleSignInConfigured()} initialError={googleAuthError(params.error)} initialCookieChoice={choice === "required" || choice === "declined" ? choice : "pending"} />;
 }

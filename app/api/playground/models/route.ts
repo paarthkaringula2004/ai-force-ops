@@ -1,6 +1,7 @@
-import OpenAI from "openai";
+import { playgroundModelCatalog } from "@/lib/playground-models";
 import { protectOpenAiRequest } from "@/config/Arcjet";
 import { getRequestSession } from "@/lib/request-session";
+import {configuredAdminRouterModel} from '@/lib/admin-router-config';
 
 export const runtime = "nodejs";
 
@@ -18,10 +19,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    const client = new OpenAI({ apiKey });
-    const page = await client.models.list();
-    const models = page.data.map((model) => model.id).sort((a, b) => a.localeCompare(b));
-    return Response.json({ models });
+    const { entries, checkedAt } = await playgroundModelCatalog();
+    return Response.json({ models: entries.filter(item => item.usable).map(item => item.id), entries, checkedAt, provider: "OpenAI",adminRouterModel:configuredAdminRouterModel() }, { headers: { "Cache-Control": "no-store" } });
   } catch {
     return Response.json(
       { error: "Could not load model IDs from OpenAI. Check the server API key and connection." },

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { getCurrentSession } from "@/lib/request-session";
 import {
   Activity,
   ArrowDown,
@@ -22,7 +23,8 @@ const capabilityGroups = [
   { name: "V&I", detail: "Platform domain", icon: Globe2 },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  const signedIn = !!(await getCurrentSession())?.user;
   const workspaceActionHref = "/dashboard";
   const workspaceActionLabel = "Open workspace";
   return (
@@ -35,8 +37,14 @@ export default function HomePage() {
         <nav aria-label="Main navigation" className="flex items-center gap-2 sm:gap-4">
           <a href="#platform" className="hidden rounded-lg px-3 py-2 text-[12px] font-medium text-[#697386] transition hover:bg-[#f1f2f8] hover:text-[#343b49] sm:inline-flex">Platform</a>
           <a href="#capabilities" className="hidden rounded-lg px-3 py-2 text-[12px] font-medium text-[#697386] transition hover:bg-[#f1f2f8] hover:text-[#343b49] sm:inline-flex">Capabilities</a>
-          <Link href="/sign-in" className="hidden rounded-lg px-3 py-2 text-[12px] font-medium text-[#697386] transition hover:bg-[#f1f2f8] hover:text-[#343b49] sm:inline-flex">Sign in</Link>
-          <Link href="/sign-up" className="hidden rounded-lg px-3 py-2 text-[12px] font-medium text-[#697386] transition hover:bg-[#f1f2f8] hover:text-[#343b49] sm:inline-flex">Create account</Link>
+          {signedIn ? (
+            <Link href={workspaceActionHref} className="hidden rounded-lg px-3 py-2 text-[12px] font-medium text-[#697386] transition hover:bg-[#f1f2f8] hover:text-[#343b49] sm:inline-flex">Explore Agent Studio</Link>
+          ) : (
+            <>
+              <Link href="/sign-in" className="hidden rounded-lg px-3 py-2 text-[12px] font-medium text-[#697386] transition hover:bg-[#f1f2f8] hover:text-[#343b49] sm:inline-flex">Sign in</Link>
+              <Link href="/sign-up" className="hidden rounded-lg px-3 py-2 text-[12px] font-medium text-[#697386] transition hover:bg-[#f1f2f8] hover:text-[#343b49] sm:inline-flex">Create account</Link>
+            </>
+          )}
           <Link href={workspaceActionHref} className="inline-flex items-center gap-2 rounded-lg bg-[#6255e8] px-4 py-2.5 text-[12px] font-semibold text-white shadow-sm transition hover:bg-[#5146d2]">{workspaceActionLabel}<ArrowRight className="size-3.5" /></Link>
         </nav>
       </header>

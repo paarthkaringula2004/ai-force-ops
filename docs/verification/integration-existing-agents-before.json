@@ -1,0 +1,92 @@
+[
+  {
+    "id": "f2b8dfee-3d48-4258-a059-a1725117359c",
+    "name": "ActionableAgent",
+    "graph_hash": "b3fe59c7487c2b42b068aac44f3f3592",
+    "instructions_hash": "b534266dc90f3e68e864c64885b90f8f"
+  },
+  {
+    "id": "4c44f365-9f4c-414f-98a1-d1d22be971eb",
+    "name": "Actual Agent",
+    "graph_hash": "240527b9582f55e684f26a483cfe9ad7",
+    "instructions_hash": "d41d8cd98f00b204e9800998ecf8427e"
+  },
+  {
+    "id": "7674ff46-2c4c-4956-8b74-bd4359d25bb0",
+    "name": "CyberOpsAgent",
+    "graph_hash": "add6d046595addb62bd2d535e893cbaf",
+    "instructions_hash": "a8b59670445b4c7cc38d60c0777bab19"
+  },
+  {
+    "id": "3c9dda6b-f28e-43dd-b565-cbabf12912b1",
+    "name": "Database Activity Monitoring Agent",
+    "graph_hash": "2d8c35e48f68371cf91342fd4ce02200",
+    "instructions_hash": "cd887ebdd84c45e500868c10c9ab3111"
+  },
+  {
+    "id": "e830b014-4158-4365-abe7-32884b028453",
+    "name": "DWP-MAIN-AGENT",
+    "graph_hash": "669fc2b0cafb6bc12438784a67c3a990",
+    "instructions_hash": "4db36208a17d4a69b7e24bf9ed596a69"
+  },
+  {
+    "id": "2abd4f94-21be-407d-b531-9a1942fe7320",
+    "name": "IAM Agent",
+    "graph_hash": "e83bac5081de5f3c48a13fc7c4c5014b",
+    "instructions_hash": "1654e25144b5efe9415193fbdff80b16"
+  },
+  {
+    "id": "58b8d29f-2eda-4008-b6ed-74866c5f480f",
+    "name": "Incident Analysis Agent",
+    "graph_hash": "60fadc3e71130ad939523012f4a83652",
+    "instructions_hash": "07da8cc3145078763d0bdc9e8ef31a25"
+  },
+  {
+    "id": "73fe9372-79e2-4a53-bd87-204ba127c109",
+    "name": "Leave Management",
+    "graph_hash": "6bff984d52cc6084ac513a2fa4b10b5b",
+    "instructions_hash": "8f539aed5dff5e24972570416602b14f"
+  },
+  {
+    "id": "fbef13ec-c347-4ae9-a388-e6fbd28e6935",
+    "name": "MeetRoom",
+    "graph_hash": "f574c9f5caeed8257996cc6eca2327c6",
+    "instructions_hash": "56758a67c0c15a1d1f75b32c99dd925f"
+  },
+  {
+    "id": "745a891f-5a85-4b7e-a483-f7055a4194e5",
+    "name": "Monitor",
+    "graph_hash": "5308cb454d03c8ffbc42aa64c763fa6f",
+    "instructions_hash": "a87d02b675aa9d4d46d5ece8b1807fb0"
+  },
+  {
+    "id": "cff4c038-0803-461e-af1d-76db41ef10b6",
+    "name": "New Employee Onboarding",
+    "graph_hash": "a038da60fcc4a369114634b2a2221c64",
+    "instructions_hash": "233b071343881d64cc86bec32785bc0e"
+  },
+  {
+    "id": "448cb042-4696-40d1-94df-bc1d82b7902d",
+    "name": "Qualys Scan Agent - NOT CONFIGURED",
+    "graph_hash": "894321cf9992e95661a644c1735bdc64",
+    "instructions_hash": "e3871c6d0ee2033c396e2d1ee7adf348"
+  },
+  {
+    "id": "8e5cce51-eda8-4e9f-90f7-74d69b64793a",
+    "name": "ServiceNow Agent",
+    "graph_hash": "bb449bb78bfa954c41d24f138d7c51b2",
+    "instructions_hash": "ef87167dcb13a722017c680b2589ce17"
+  },
+  {
+    "id": "8ca671f1-cbdc-4743-932d-3f705f2f5825",
+    "name": "Software Inventory Agent",
+    "graph_hash": "a0f324a6718ab2b512f30442a3826869",
+    "instructions_hash": "52fd95e16781fa19dac7504967728109"
+  },
+  {
+    "id": "152da690-e08b-417f-a94d-3fcdd346afb8",
+    "name": "Systrack",
+    "graph_hash": "0db20cded9b7eb1a0fff7ce61fc6e9f8",
+    "instructions_hash": "af9adae7ebad2f0f31cdf65a7f090aa9"
+  }
+]

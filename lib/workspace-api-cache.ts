@@ -131,9 +131,9 @@ export function activateWorkspaceApiCache(userId: string | undefined) {
   }
 }
 
-export function preloadWorkspaceApiData() {
+export function preloadWorkspaceApiData(privileged = true) {
   if (typeof window === "undefined" || !cacheUserId) return;
-  for (const path of preloadPaths) void window.fetch(path).catch(() => undefined);
+  for (const path of preloadPaths.filter(path => privileged || !["/api/agents", "/api/agents?view=bin", "/api/tools", "/api/token-calculator/state"].includes(path))) void window.fetch(path).catch(() => undefined);
 }
 
 export function invalidateWorkspaceApiData(section?: string) {

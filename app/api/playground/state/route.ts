@@ -1,3 +1,5 @@
+import { PLAYGROUND_QUESTION_LIMIT, PLAYGROUND_REPLY_LIMIT } from "@/lib/playground-messages";
+import { requireSameOrigin } from "@/lib/service-review/ingestion";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
 import { getRequestSession } from "@/lib/request-session";
@@ -46,7 +48,7 @@ export async function GET(request: Request) {
         [session.user.id],
       ),
     ]);
-    return Response.json({ settings: { ...defaults, ...settings.rows[0]?.settings }, messages: messages.rows.map((item) => ({ ...item, createdAt: item.createdAt.toISOString() })) });
+    return Response.json({ settings: { ...defaults, ...settings.rows[0]?.settings }, messages: messages.rows.slice(0, messages.rows.findLastIndex(item => item.role === "assistant") + 1).map((item) => ({ ...item, createdAt: item.createdAt.toISOString() })) });
   } catch {
     return Response.json({ error: "Could not load Playground data from PostgreSQL." }, { status: 503 });
   }
@@ -76,15 +78,19 @@ export async function POST(request: Request) {
     const value: unknown = await request.json();
     if (typeof value !== "object" || value === null) return Response.json({ error: "Invalid Playground message." }, { status: 400 });
     const body = value as Record<string, unknown>;
-    const role = body.role;
-    const content = typeof body.content === "string" ? body.content.trim() : "";
-    if ((role !== "user" && role !== "assistant") || !content || content.length > 12000) return Response.json({ error: "Messages must contain 1 to 12,000 characters." }, { status: 400 });
+    const userContent = typeof body.userContent === "string" ? body.userContent : "";
+    const assistantContent = typeof body.assistantContent === "string" ? body.assistantContent.trim() : "";
+    if (!userContent.trim() || !assistantContent) return Response.json({error:"A question and answer are required to save this conversation."},{status:400});
+    if (userContent.length > PLAYGROUND_QUESTION_LIMIT) return Response.json({error:"Keep your question within 12,000 characters."},{status:400});
+    if (assistantContent.length > PLAYGROUND_REPLY_LIMIT) return Response.json({error:"This answer is too large to save in chat history."},{status:400});
+    // One SQL statement saves both messages atomically; failed model calls save neither.
     const result = await db.query<{ id: string; role: "user" | "assistant"; content: string; createdAt: Date }>(
-      `INSERT INTO playground_messages (id, user_id, role, content) VALUES ($1, $2, $3, $4)
+      `INSERT INTO playground_messages (id, user_id, role, content, created_at)
+       VALUES ($1, $3, 'user', $4, now()), ($2, $3, 'assistant', $5, now() + interval '1 microsecond')
        RETURNING id, role, content, created_at AS "createdAt"`,
-      [randomUUID(), session.user.id, role, content],
+      [randomUUID(), randomUUID(), session.user.id, userContent, assistantContent],
     );
-    return Response.json({ message: { ...result.rows[0], createdAt: result.rows[0].createdAt.toISOString() } }, { status: 201 });
+    return Response.json({ messages: result.rows.map(item => ({ ...item, createdAt: item.createdAt.toISOString() })) }, { status: 201 });
   } catch {
     return Response.json({ error: "Could not save this message to PostgreSQL." }, { status: 503 });
   }
@@ -93,10 +99,19 @@ export async function POST(request: Request) {
 export async function DELETE(request: Request) {
   const session = await getRequestSession(request);
   if (!session?.user) return Response.json({ error: "Sign in to clear Playground messages." }, { status: 401 });
+  try { requireSameOrigin(request); } catch { return Response.json({ error: "Invalid origin." }, { status: 403 }); }
+  const client = await db.connect();
   try {
-    await db.query("DELETE FROM playground_messages WHERE user_id = $1", [session.user.id]);
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`workspace-chat:${session.user.id}`]);
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))", [`employee-playground:${session.user.id}`]);
+    await client.query("DELETE FROM playground_messages WHERE user_id=$1", [session.user.id]);
+    await client.query("DELETE FROM employee_playground_drafts WHERE user_id=$1", [session.user.id]);
+    await client.query("DELETE FROM workspace_chat_actions WHERE user_id=$1", [session.user.id]);
+    await client.query("COMMIT");
     return Response.json({ cleared: true });
   } catch {
+    await client.query("ROLLBACK");
     return Response.json({ error: "Could not clear Playground messages from PostgreSQL." }, { status: 503 });
-  }
+  } finally { client.release(); }
 }

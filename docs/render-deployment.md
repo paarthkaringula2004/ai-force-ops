@@ -7,7 +7,7 @@ Use the directory containing `package.json` as the Render root directory.
 | Setting | Value |
 | --- | --- |
 | Build command | `npm ci && npm run build` |
-| Start command | `npm start -- --hostname 0.0.0.0` |
+| Start command (separate scanner/worker hosts) | `npm run start:web -- --hostname 0.0.0.0` |
 | Health check path | `/api/health` |
 | Node version | Node 22 LTS |
 
@@ -29,7 +29,7 @@ Set secrets in Render's environment settings. Do not upload the local `.env` fil
 
 ## Database initialization
 
-For a new database, initialize Better Auth's schema with the project's `npm run auth:migrate` command, then run `npm run db:migrate`. Review the authentication migration prompt and use the Better Auth version compatible with this project's installed package. The application migrations through `0009_epace.sql` are required. For an existing database, `npm run db:migrate` safely skips already applied application migrations.
+For a new database, initialize Better Auth's schema with the project's `npm run auth:migrate` command, then run `npm run db:migrate`. Review the authentication migration prompt and use the Better Auth version compatible with this project's installed package. Apply all application migrations through `0022_review_chat_conversations.sql`. For an existing database, `npm run db:migrate` safely skips already applied application migrations.
 
 Run migrations before directing users to the new service. A connection-only health check does not establish that all application tables exist.
 
@@ -50,6 +50,8 @@ For Alertmanager push delivery, generate the webhook in the **deployed** app. Co
 
 ## Verify after deployment
 
+Automated security reports use a separate scanner worker. To keep that worker free, run it on an existing computer/server and point it at this Render web service. Set `SECURITY_SCAN_TARGET_URL` and the shared operator `SECURITY_SCAN_WORKER_TOKEN` on the web service; configure the matching target, token and `SECURITY_SCAN_APP_URL` on the worker. Leave `REVIEW_CHAT_ENABLE_PAID_AI` and `VULNERABILITY_ENABLE_PAID_AI` disabled. See [automated-security-scans.md](automated-security-scans.md) for exact setup and verification. Installing scanners inside the web service is not required.
+
 1. `/api/health` returns HTTP 200 and `database: connected`.
 2. Sign in successfully and open Agent Studio, Review Center, eAssist, and ePACE.
 3. All three integrations show **Connected** after Test & sync.
@@ -69,3 +71,24 @@ Set `BETTER_AUTH_URL=https://ai-force-ops.onrender.com` on the web service. Reta
 The deployment repository's Prometheus configuration monitors Prometheus, Alertmanager, and `https://ai-force-ops.onrender.com/api/metrics`. Deploy this updated application before expecting its metrics target to be healthy. The ServiceUnavailable rule waits five minutes; the database rule waits two minutes. Alertmanager displays genuine active failures, so a healthy system can have zero alerts. No email or external notification recipient has been configured.
 
 PowerShell task #3 fails in Semaphore itself because the deployed runner lacks the `powershell` executable. A successful OpenTofu task is not evidence that the PowerShell template can run. The task window now explains this and provides Confirm/Reject for tasks paused by the automation tool.
+
+## Review Center collection
+
+The updated collectors now store Review Center readings automatically. Apply migrations 0010 and 0011 before starting the service and keep the background worker running for collection with no browsers open. See [Review Center data and collector API](review-center-data.md) for source definitions, token setup, retention and verification.
+
+
+## ePACE deployment checks
+
+Migration 0012 adds persistent per-account request limits and unattended cleanup health. Keep the existing integration worker running: it now also expires ePACE runs and alerts hourly, and marks abandoned runs failed after fifteen minutes. No additional worker secret is needed.
+
+Before opening company access, configure the controls described in [ePACE production setup](epace-production.md). Open **ePACE → Deployment readiness** after deployment and run **Test provider**. This checks real access to selected models, structured responses, moderation and, for Semantic/Hybrid retrieval, embeddings. Each test incurs small provider usage.
+
+The app now supports `AUTH_DISABLE_SIGNUP=true` to close public email/password registration after approved accounts have been created. It does not add organization invitation, SSO or role-management features.
+
+
+Website-wide operations setup and limits: [platform-operations.md](platform-operations.md). New monitoring rules are provided under `docs/monitoring/`; these have not been published to the separate deployment repository.
+
+
+## Super assistant security workflow
+
+Apply migrations 0023 and 0024 before deployment. They add continuous schedules, persisted chat actions, encrypted scanner API connections and collector leases. See [continuous security workflow](automated-security-scans.md) for worker, API origin approval and local verification requirements. This change has been verified locally, not on Render.

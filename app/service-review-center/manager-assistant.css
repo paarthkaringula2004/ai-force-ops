@@ -1,0 +1,27 @@
+.manager-chat-markdown {overflow-wrap:anywhere}
+.manager-chat-markdown strong {font-weight:700}
+.manager-chat-markdown em {font-style:italic}
+.manager-chat-markdown del {text-decoration:line-through}
+.manager-chat-markdown :not(pre)>code {border-radius:4px;background:#e9e6f5;padding:2px 4px;font-size:.9em}
+.manager-chat-markdown p {margin:0 0 12px}
+.manager-chat-markdown p:last-child {margin-bottom:0}
+.manager-chat-markdown h1,.manager-chat-markdown h2,.manager-chat-markdown h3 {margin:18px 0 10px;font-size:15px;font-weight:600;line-height:1.5}
+.manager-chat-markdown h1:first-child,.manager-chat-markdown h2:first-child,.manager-chat-markdown h3:first-child {margin-top:0}
+.manager-chat-markdown ul,.manager-chat-markdown ol {margin:12px 0;padding-left:22px}
+.manager-chat-markdown ul {list-style:disc}
+.manager-chat-markdown ol {list-style:decimal}
+.manager-chat-markdown li {margin:6px 0}
+.manager-chat-markdown a {color:#6351e9;text-decoration:underline;text-underline-offset:3px}
+.manager-chat-markdown pre {overflow-x:auto;margin:12px 0;border-radius:10px;background:#f5f6fb;padding:12px;font-size:12px}
+.manager-chat-markdown table {display:block;width:100%;overflow-x:auto;margin:14px 0;border-collapse:collapse;font-size:12px}
+.manager-chat-markdown th,.manager-chat-markdown td {border:1px solid #e5e7f1;padding:8px 10px;text-align:left}
+.manager-chat-markdown th {background:#f5f6fb;font-weight:600}
+.manager-chat-markdown hr {margin:18px 0;border:0;border-top:1px solid #e5e7f1}
+.manager-chat-markdown blockquote {margin:12px 0;border-left:3px solid #d9d2fa;padding-left:12px;color:#64748b}
+.manager-review-chat button:focus-visible {outline:2px solid #a99bff;outline-offset:3px}
+
+.manager-review-chat textarea {height:44px;min-height:44px;max-height:104px;padding:10px 0;line-height:24px}
+
+.manager-review-chat textarea {resize:none}
+
+.manager-review-chat .pace-selection-toolbar {z-index:100001}

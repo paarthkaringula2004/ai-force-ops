@@ -4,7 +4,7 @@ import { createContext, useContext } from "react";
 import type { WorkflowNodeData, WorkflowNodeKind } from "@/types/workflow";
 
 export type AddWorkflowNode = (kind: WorkflowNodeKind, position?: { x: number; y: number }, data?: Partial<WorkflowNodeData>) => void;
-export const WorkflowContext = createContext<{ addNode: AddWorkflowNode; openToolLibrary: () => void } | null>(null);
+export const WorkflowContext = createContext<{ addNode: AddWorkflowNode; openToolLibrary: () => void; addAgentTool?: (data: WorkflowNodeData) => string; openAttachments?: (id: string, kind: "agents" | "tools" | "memory") => void } | null>(null);
 
 export function useWorkflow() {
   const context = useContext(WorkflowContext);

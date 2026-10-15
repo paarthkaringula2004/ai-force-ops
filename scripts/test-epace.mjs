@@ -109,6 +109,84 @@ try {
     "https://untrusted.example",
   );
   pass("cross-account reads, writes and cross-origin mutations rejected");
+  await call(
+    a,
+    "/api/epace",
+    { action: "settings", projectId: pid, settings: null },
+    400,
+  );
+  await call(
+    a,
+    "/api/epace",
+    {
+      action: "settings",
+      projectId: pid,
+      settings: { ...snap.project.settings, maxOutputTokens: 8001 },
+    },
+    400,
+  );
+  await call(
+    a,
+    "/api/epace",
+    {
+      action: "settings",
+      projectId: pid,
+      settings: { ...snap.project.settings, requireEvidence: "true" },
+    },
+    400,
+  );
+  await call(
+    a,
+    "/api/epace",
+    {
+      action: "settings",
+      projectId: pid,
+      settings: { ...snap.project.settings, contentSafety: false },
+    },
+    403,
+  );
+  pass(
+    "malformed settings, invalid output/evidence controls and disabled safety rejected",
+  );
+  const oversized = await fetch(base + "/api/epace", {
+    method: "POST",
+    headers: { Cookie: a, Origin: base, "Content-Type": "application/json" },
+    duplex: "half",
+    body: new ReadableStream({
+      start(c) {
+        c.enqueue(
+          new TextEncoder().encode(
+            JSON.stringify({ payload: "x".repeat(210000) }),
+          ),
+        );
+        c.close();
+      },
+    }),
+  });
+  assert.equal(oversized.status, 413);
+  pass("actual streamed request size enforced without Content-Length");
+  await call(b, `/api/epace/readiness?project=${pid}`, undefined, 404);
+  await call(
+    a,
+    "/api/epace/readiness",
+    { projectId: pid },
+    403,
+    "https://untrusted.example",
+  );
+  const readiness = await call(a, `/api/epace/readiness?project=${pid}`);
+  assert.ok(
+    readiness.checks.some(
+      (c) => c.id === "evidence" && c.state === "attention",
+    ),
+  );
+  assert.ok(
+    readiness.manual.some((c) => c.name === "Company security requirements"),
+  );
+  assert.ok(!JSON.stringify(readiness).includes(process.env.OPENAI_API_KEY));
+  pass(
+    "readiness uses actual coverage, hides credentials and enforces account/origin isolation",
+  );
+
   const document = await upload(
     a,
     pid,
@@ -128,6 +206,16 @@ try {
   );
   await upload(a, pid, "invalid.exe", "not a document", 400);
   pass("document indexing, source retrieval, type validation and ownership");
+  const again = await upload(a, pid, "renamed-duplicate.md", doc.data.content);
+  assert.equal(again.id, document.id);
+  assert.equal(again.deduplicated, true);
+  const countAfterDuplicate = await pool.query(
+    "SELECT count(*)::int AS n FROM epace_chunks WHERE document_id=$1",
+    [document.id],
+  );
+  assert.equal(countAfterDuplicate.rows[0].n, document.chunks);
+  pass("duplicate file does not multiply stored passages");
+
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
   zip.file(
@@ -149,6 +237,17 @@ try {
     await zip.generateAsync({ type: "nodebuffer" }),
   );
   pass("DOCX extraction");
+  const bomb = new JSZip();
+  bomb.file("word/document.xml", "x".repeat(20001000));
+  await upload(
+    a,
+    pid,
+    "oversized-expanded.docx",
+    await bomb.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }),
+    413,
+  );
+  pass("compressed DOCX expansion limit rejects an oversized archive");
+
   const pdfObjects = [
     "<< /Type /Catalog /Pages 2 0 R >>",
     "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
@@ -314,11 +413,25 @@ try {
         thresholds: { groundedness: 5, relevance: 5, fluency: 5, coherence: 5 },
       },
     });
+
+    const preflight = await call(a, "/api/epace/readiness", { projectId: pid });
+    assert.ok(preflight.readiness.checks.every((c) => c.source));
+    assert.equal(
+      preflight.readiness.checks.find((c) => c.id === "probe").state,
+      "passed",
+    );
+    const checked = await call(a, `/api/epace/readiness?project=${pid}`);
+    assert.equal(checked.checks.find((c) => c.id === "probe").state, "passed");
+    pass(
+      "real provider preflight verifies selected models, moderation and embeddings",
+    );
+    const chatRequestId = randomUUID();
     const r = await fetch(`${base}/api/epace/chat`, {
       method: "POST",
       headers: { Cookie: a, Origin: base, "Content-Type": "application/json" },
       body: JSON.stringify({
         projectId: pid,
+        requestId: chatRequestId,
         question:
           "According to the test evidence, when is the approved service maintenance window?",
       }),
@@ -367,6 +480,48 @@ try {
       404,
     );
     pass("human feedback persistence and isolation");
+    await call(
+      a,
+      "/api/epace/chat",
+      {
+        projectId: pid,
+        requestId: chatRequestId,
+        question: "Do not execute a duplicate",
+      },
+      409,
+    );
+    pass("duplicate chat request is rejected before another provider run");
+    const empty = await call(a, "/api/epace", {
+      action: "createProject",
+      name: "Disposable empty knowledge test",
+    });
+    await call(a, "/api/epace", {
+      action: "settings",
+      projectId: empty.id,
+      settings: { ...snap.project.settings, model },
+    });
+    const noEvidence = await fetch(base + "/api/epace/chat", {
+      method: "POST",
+      headers: { Cookie: a, Origin: base, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: empty.id,
+        question: "What is the approved service maintenance time?",
+      }),
+    });
+    const missingBody = await noEvidence.text();
+    assert.match(missingBody, /event: done/);
+    assert.match(missingBody, /insufficient_evidence/);
+    const missing = await call(a, `/api/epace?project=${empty.id}`);
+    assert.equal(
+      missing.records
+        .find((r) => r.kind === "run")
+        .data.spans.filter((s) => s.kind === "llm").length,
+      0,
+    );
+    pass(
+      "empty knowledge gives an evidence notice without model generation or invented evaluation",
+    );
+
     const safety = await call(a, "/api/epace/moderate", {
       projectId: pid,
       text: "EXACT_QA_BLOCK harmless disposable verification string",
@@ -388,7 +543,129 @@ try {
       ),
     );
     pass("blocked chat creates actual in-app safety alert");
+    const cancellationId = randomUUID(),
+      abort = new AbortController();
+    const cancellation = await fetch(base + "/api/epace/chat", {
+      method: "POST",
+      headers: { Cookie: a, Origin: base, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        projectId: pid,
+        requestId: cancellationId,
+        question: "Summarize all the evidence carefully.",
+      }),
+      signal: abort.signal,
+    });
+    assert.equal(cancellation.status, 200);
+    const cancelReader = cancellation.body.getReader();
+    await cancelReader.read();
+    abort.abort();
+    let cancelled;
+    for (let i = 0; i < 12; i++) {
+      cancelled = (
+        await pool.query("SELECT data FROM epace_records WHERE id=$1", [
+          cancellationId,
+        ])
+      ).rows[0]?.data;
+      if (cancelled?.status === "error") break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    assert.equal(cancelled?.status, "error");
+    assert.equal(cancelled.output, "");
+    pass(
+      "client cancellation stops provider work and saves an interrupted trace without answer text",
+    );
   }
+
+  const threadFixture = randomUUID(),
+    runFixture = randomUUID(),
+    alertFixture = randomUUID();
+  for (const [id, kind, data] of [
+    [threadFixture, "thread", { name: "Disposable deletion verification" }],
+    [
+      runFixture,
+      "run",
+      {
+        threadId: threadFixture,
+        status: "pending",
+        input: "Disposable fixture",
+        output: "",
+      },
+    ],
+    [alertFixture, "alert", { runId: runFixture, input: "Disposable fixture" }],
+  ]) {
+    await pool.query(
+      "INSERT INTO epace_records(id,user_id,project_id,kind,data) VALUES($1,$2,$3,$4,$5)",
+      [id, users[0], pid, kind, JSON.stringify(data)],
+    );
+  }
+  await call(
+    a,
+    "/api/epace",
+    { action: "delete", projectId: pid, id: threadFixture },
+    409,
+  );
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM epace_records WHERE id=$1",
+        [threadFixture],
+      )
+    ).rows[0].n,
+    1,
+  );
+  await pool.query(
+    "UPDATE epace_records SET data=jsonb_set(data,'{status}','\"success\"'::jsonb) WHERE id=$1",
+    [runFixture],
+  );
+  await call(a, "/api/epace", {
+    action: "delete",
+    projectId: pid,
+    id: threadFixture,
+  });
+  assert.equal(
+    (
+      await pool.query(
+        "SELECT count(*)::int AS n FROM epace_records WHERE id=ANY($1::uuid[])",
+        [[threadFixture, runFixture, alertFixture]],
+      )
+    ).rows[0].n,
+    0,
+  );
+  pass(
+    "active conversation deletion is blocked and completed deletion removes related alerts and runs",
+  );
+  // Fill this disposable account's real limiter window; no provider request should escape.
+  await pool.query(
+    "INSERT INTO epace_request_limits(user_id,window_start,window_kind,requests) VALUES($1,date_trunc('day',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC','day',200) ON CONFLICT(user_id,window_start,window_kind) DO UPDATE SET requests=200",
+    [users[0]],
+  );
+  await call(a, "/api/epace", {
+    action: "settings",
+    projectId: pid,
+    settings: { ...config, model: "gpt-4o-mini" },
+  });
+  await call(
+    a,
+    "/api/epace/chat",
+    { projectId: pid, question: "Must not reach a provider" },
+    429,
+  );
+  pass("persistent per-account daily limiter blocks provider admission");
+  await pool.query("DELETE FROM epace_request_limits WHERE user_id=$1", [
+    users[0],
+  ]);
+  await pool.query(
+    "INSERT INTO usage_events(id,user_id,source,model_id,input_tokens,output_tokens,total_tokens) VALUES($1,$2,'epace','disposable-budget-fixture',500000,0,500000)",
+    [randomUUID(), users[0]],
+  );
+  await call(
+    a,
+    "/api/epace/chat",
+    { projectId: pid, question: "Must not exceed token allowance" },
+    429,
+  );
+  pass("recorded daily token allowance blocks the next provider request");
+
   await call(a, "/api/epace", {
     action: "delete",
     projectId: pid,

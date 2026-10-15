@@ -1,84 +1,43 @@
-import { randomUUID } from "node:crypto";
-import { db } from "@/lib/db";
-import { getRequestSession } from "@/lib/request-session";
-
-export const runtime = "nodejs";
-
-const recordTypes = new Set(["metric", "health", "inventory", "lifecycle", "forecast", "availability"]);
-type RecordType = "metric" | "health" | "inventory" | "lifecycle" | "forecast" | "availability";
-type InputRecord = { recordType: RecordType; recordKey: string; payload: Record<string, unknown>; observedAt?: Date };
-type StoredRecord = { id: string; recordType: RecordType; recordKey: string; payload: Record<string, unknown>; observedAt: Date };
-
-function parseRecord(value: unknown): InputRecord | null {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
-  const item = value as Record<string, unknown>;
-  const recordType = item.recordType;
-  const recordKey = typeof item.recordKey === "string" ? item.recordKey.trim() : "";
-  const payload = item.payload;
-  if (typeof recordType !== "string" || !recordTypes.has(recordType) || !recordKey || recordKey.length > 180 || !payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const data = payload as Record<string, unknown>;
-  const numeric = (key: string) => typeof data[key] === "number" && Number.isFinite(data[key]);
-  const string = (key: string, max = 240) => typeof data[key] === "string" && (data[key] as string).trim().length > 0 && (data[key] as string).length <= max;
-  const valid = recordType === "metric" ? string("label") && numeric("value")
-    : recordType === "health" ? string("device", 180) && string("status", 40)
-      : recordType === "inventory" ? string("region", 80) && string("category", 80) && numeric("count")
-        : recordType === "lifecycle" ? string("stage", 80) && numeric("count")
-          : recordType === "forecast" ? string("environment", 40) && string("period", 40) && numeric("lowerBound") && numeric("upperBound")
-            : string("service", 180) && numeric("availability");
-  if (!valid) return null;
-  const observedAt = item.observedAt === undefined ? undefined : new Date(String(item.observedAt));
-  if (observedAt && Number.isNaN(observedAt.getTime())) return null;
-  return { recordType: recordType as RecordType, recordKey, payload: data, observedAt };
+import {sharedOperationsOwner} from '@/lib/eassist/organization-context';
+import { db } from '@/lib/db';
+import { getRequestSession } from '@/lib/request-session';
+import { boundedJson, InputError } from '@/lib/eassist/transport';
+import { collectorUser, ingestReadings, IngestionError, requireSameOrigin } from '@/lib/service-review/ingestion';
+import { workspaceAccess } from '@/lib/workspace-access';
+import { organizationOwner, organizationSummary, overviewProjection } from '@/lib/organization';
+export const runtime='nodejs';
+export async function GET(request:Request) {
+ const session=await getRequestSession(request);
+ if(!session?.user)return Response.json({error:'Sign in to view Review Center.'},{status:401});
+ try {
+  const member=await workspaceAccess(session.user.id);
+  if(!member.active||!['admin','manager'].includes(member.role))return Response.json({error:'Review Center access required.'},{status:403});
+  const manager=member.role==='manager';
+  const owner=await organizationOwner();
+  if(!owner)return Response.json({error:'The organization integration owner has not been configured by an Admin.'},{status:503});
+  const [records,sources,worker]=await Promise.all([
+   db.query(`WITH ranked AS (
+    SELECT r.*,row_number() OVER(PARTITION BY r.record_type,r.record_key ORDER BY r.observed_at DESC,r.created_at DESC) AS rn
+    FROM service_review_records r LEFT JOIN eassist_connections c ON c.id=r.source_connection_id
+    WHERE r.user_id=$1 AND (r.source_connection_id IS NULL OR c.enabled=true)
+     AND (r.source_connection_id IS NULL OR r.is_current OR r.record_type='metric')
+   ) SELECT id,record_type AS "recordType",record_key AS "recordKey",payload,observed_at AS "observedAt",source_connection_id AS "sourceId",source_kind AS "sourceKind",source_name AS "sourceName",is_current AS "isCurrent"
+    FROM ranked WHERE rn<=CASE WHEN record_type='metric' THEN 12 ELSE 1 END ORDER BY observed_at DESC`,[owner]),
+   db.query(`SELECT c.id,c.name,c.kind,c.enabled,c.state,c.last_error AS "sourceError",c.checked_at AS "checkedAt",s.imported_at AS "importedAt",s.last_error AS "importError",COALESCE(s.reading_count,0) AS "readingCount"
+    FROM eassist_connections c LEFT JOIN service_review_sync s ON s.connection_id=c.id WHERE c.user_id=$1 ORDER BY c.name`,[owner]),
+   db.query('SELECT checked_at AS "checkedAt" FROM integration_worker_health WHERE id=true')
+  ]);
+  return Response.json({organization:await organizationSummary(member),worker:{active:Boolean(worker.rows[0]?.checkedAt&&Date.now()-new Date(worker.rows[0].checkedAt).getTime()<120000),checkedAt:worker.rows[0]?.checkedAt||null,configured:Boolean(process.env.EASSIST_WORKER_TOKEN&&process.env.EASSIST_WORKER_TOKEN.length>=32)},records:manager?overviewProjection(records.rows):records.rows,sources:sources.rows.map(s=>({...s,sourceError:manager?'':s.sourceError,importError:manager?null:s.importError,stale:!s.enabled||s.state!=='connected'||Boolean(s.importError)||!s.importedAt||Date.now()-new Date(s.importedAt).getTime()>120000})),checkedAt:new Date().toISOString()},{headers:{'Cache-Control':'no-store'}});
+ }catch{return Response.json({error:'Review Center storage is unavailable. Check the database and migrations.'},{status:503});}
 }
-
-export async function GET(request: Request) {
-  const session = await getRequestSession(request);
-  if (!session?.user) return Response.json({ error: "Sign in to view service review data." }, { status: 401 });
-  try {
-    const result = await db.query<StoredRecord>(
-      `SELECT id, record_type AS "recordType", record_key AS "recordKey", payload,
-              observed_at AS "observedAt"
-       FROM service_review_records WHERE user_id = $1
-       ORDER BY observed_at DESC LIMIT 1500`,
-      [session.user.id],
-    );
-    return Response.json({ records: result.rows.map((row) => ({ ...row, observedAt: row.observedAt.toISOString() })), checkedAt: new Date().toISOString() });
-  } catch {
-    return Response.json({ error: "Could not load service review records from PostgreSQL." }, { status: 503 });
-  }
-}
-
-export async function POST(request: Request) {
-  const session = await getRequestSession(request);
-  if (!session?.user) return Response.json({ error: "Sign in to write service review data." }, { status: 401 });
-  try {
-    const body = await request.json() as { records?: unknown };
-    if (!Array.isArray(body.records) || body.records.length < 1 || body.records.length > 250) {
-      return Response.json({ error: "Send between 1 and 250 service records." }, { status: 400 });
-    }
-    const records = body.records.map(parseRecord);
-    if (records.some((record) => record === null)) {
-      return Response.json({ error: "A record is invalid. Check its type, key, and required fields." }, { status: 400 });
-    }
-    const client = await db.connect();
-    try {
-      await client.query("BEGIN");
-      for (const record of records as InputRecord[]) {
-        await client.query(
-          `INSERT INTO service_review_records (id, user_id, record_type, record_key, payload, observed_at)
-           VALUES ($1, $2, $3, $4, $5::jsonb, COALESCE($6::timestamptz, now()))`,
-          [randomUUID(), session.user.id, record.recordType, record.recordKey, JSON.stringify(record.payload), record.observedAt?.toISOString() ?? null],
-        );
-      }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
-    return Response.json({ accepted: records.length, receivedAt: new Date().toISOString() }, { status: 201 });
-  } catch {
-    return Response.json({ error: "Could not save service review records to PostgreSQL." }, { status: 503 });
-  }
+export async function POST(request:Request) {
+ try {
+  const collector=await collectorUser(request);
+  if(!collector)requireSameOrigin(request);
+  const actor=collector||(await getRequestSession(request))?.user?.id;
+  if(!actor)return Response.json({error:'Sign in or provide a collector token.'},{status:401});
+  const user=await sharedOperationsOwner(actor);
+  const result=await ingestReadings(user,await boundedJson(request));
+  return Response.json({...result,receivedAt:new Date().toISOString()},{status:result.duplicate?200:201});
+ }catch(error){return Response.json({error:error instanceof IngestionError||error instanceof InputError?error.message:'Could not save readings. Check the database.'},{status:error instanceof IngestionError||error instanceof InputError?error.status:503,headers:error instanceof IngestionError&&error.status===429?{'Retry-After':'1'}:undefined});}
 }

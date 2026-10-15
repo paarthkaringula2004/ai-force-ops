@@ -1,3 +1,4 @@
+import { boundedJson, runtimePolicy } from "@/lib/epace/runtime";
 import { trustedOrigin } from "@/lib/epace/origin";
 import { randomUUID } from "node:crypto";
 import { db } from "@/lib/db";
@@ -25,6 +26,7 @@ export async function GET(request: Request) {
         s.user.id,
         new URL(request.url).searchParams.get("project"),
       ),
+      { headers: { "Cache-Control": "private, no-store" } },
     );
   } catch (e) {
     return failure(e);
@@ -55,7 +57,7 @@ export async function POST(request: Request) {
   try {
     if (Number(request.headers.get("content-length")) > 200000)
       throw new PaceError("Request too large.", 413);
-    const b = await request.json(),
+    const b = await boundedJson(request, 200000),
       user = s.user.id;
     if (b.action === "createProject") {
       const id = randomUUID();
@@ -67,8 +69,27 @@ export async function POST(request: Request) {
       return Response.json({ id });
     }
     const p = await project(user, b.projectId);
+    if (b.action === "deleteProject") {
+      const client=await db.connect();
+      try {
+        await client.query("BEGIN");
+        const owned=await client.query("SELECT id FROM epace_projects WHERE user_id=$1 AND id=$2 FOR UPDATE",[user,p.id]);
+        if(!owned.rowCount) throw new PaceError("Project not found.",404);
+        const active=await client.query("SELECT 1 FROM epace_records WHERE user_id=$1 AND project_id=$2 AND kind='run' AND data->>'status'='pending' AND created_at>now()-interval '15 minutes'",[user,p.id]);
+        if(active.rowCount) throw new PaceError("Wait for this project's active answer to finish before deleting it.",409);
+        await client.query("DELETE FROM epace_projects WHERE user_id=$1 AND id=$2",[user,p.id]);
+        await client.query("COMMIT");
+      } catch(error){await client.query("ROLLBACK");throw error;}
+      finally{client.release();}
+      return Response.json({deleted:true,id:p.id});
+    }
     if (b.action === "settings") {
       const v = settings(b.settings);
+      if (runtimePolicy().requireSafety && !v.contentSafety)
+        throw new PaceError(
+          "Input and output safety checks are required by the production policy.",
+          403,
+        );
       if (v.filterId) await record(user, p.id, v.filterId, "filter");
       await db.query(
         "UPDATE epace_projects SET settings=$3,updated_at=now() WHERE user_id=$1 AND id=$2",
@@ -94,11 +115,25 @@ export async function POST(request: Request) {
           "DELETE FROM epace_records WHERE user_id=$1 AND project_id=$2 AND id=$3",
           [user, p.id, r.id],
         );
-        if (r.kind === "thread")
+        if (r.kind === "thread") {
+          const active = await c.query(
+            `SELECT 1 FROM epace_records WHERE user_id=$1 AND project_id=$2 AND kind='run' AND data->>'threadId'=$3 AND data->>'status'='pending' AND created_at>now()-interval '15 minutes'`,
+            [user, p.id, r.id],
+          );
+          if (active.rowCount)
+            throw new PaceError(
+              "Wait for this conversation's active answer to finish before deleting it.",
+              409,
+            );
+          await c.query(
+            `DELETE FROM epace_records a WHERE a.user_id=$1 AND a.project_id=$2 AND a.kind='alert' AND a.data->>'runId' IN (SELECT id::text FROM epace_records WHERE user_id=$1 AND project_id=$2 AND kind='run' AND data->>'threadId'=$3)`,
+            [user, p.id, r.id],
+          );
           await c.query(
             `DELETE FROM epace_records WHERE user_id=$1 AND project_id=$2 AND kind='run' AND data->>'threadId'=$3`,
             [user, p.id, r.id],
           );
+        }
         if (r.kind === "filter")
           await c.query(
             `UPDATE epace_projects SET settings=jsonb_set(settings,'{filterId}','""'::jsonb) WHERE id=$1 AND user_id=$2 AND settings->>'filterId'=$3`,
@@ -123,6 +158,15 @@ export async function POST(request: Request) {
       }
       await put(user, p.id, "run", { ...r.data, feedback: scores }, r.id);
       await audit(user, p.id, "Submitted human feedback", r.id);
+    } else if (b.action === "testAlert") {
+      const id = await put(user, p.id, "alert", {
+        name:"Test alert: ePACE in-app delivery", test:true,
+        metrics:{}, thresholds:{}, context:[], resolved:false, delivery:"In-app",
+        input:"User-requested alert delivery test.",
+        output:"This is a test notification. No model evaluation, safety failure or service incident occurred.",
+      });
+      await audit(user, p.id, "Created test quality alert", id);
+      return Response.json({id, test:true});
     } else if (b.action === "resolveAlert") {
       const r = await record(user, p.id, b.id, "alert");
       await put(user, p.id, "alert", { ...r.data, resolved: true }, r.id);
@@ -177,6 +221,8 @@ export async function POST(request: Request) {
           const e = v.evidence?.[key];
           if (!e || !Number.isInteger(e.score) || e.score < 0 || e.score > 5)
             throw new PaceError("Assessment ratings must be 0–5.");
+          if (e.score > 0 && (typeof e.note !== "string" || !e.note.trim()))
+            throw new PaceError(`Add evidence for the ${key} rating.`);
           evidence[key] = {
             score: e.score,
             note: text(e.note, 2000, e.score > 0),
@@ -184,6 +230,8 @@ export async function POST(request: Request) {
         }
         data.evidence = evidence;
         data.stage = text(v.stage, 40, true);
+        if (!["Design & build", "Onboard & stabilize", "Operate & improve"].includes(data.stage as string))
+          throw new PaceError("Choose a valid lifecycle stage.");
       } else {
         for (const key of [
           "description",

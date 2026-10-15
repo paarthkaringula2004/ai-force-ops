@@ -7,6 +7,8 @@ export const metrics = [
 export const categories = ["Violence", "Hate", "Sexual", "Self-harm"] as const;
 export type Settings = {
   model: string;
+  maxOutputTokens: number;
+  requireEvidence: boolean;
   evaluationModel: string;
   retrieval: "Hybrid" | "Keyword" | "Semantic";
   semanticRanker: boolean;
@@ -21,6 +23,8 @@ export type Settings = {
 };
 export const defaultSettings: Settings = {
   model: "",
+  maxOutputTokens: 2000,
+  requireEvidence: true,
   evaluationModel: "",
   retrieval: "Keyword",
   semanticRanker: false,
@@ -95,6 +99,7 @@ export type RunData = {
   model: string;
   status: "pending" | "success" | "error" | "blocked";
   error?: string;
+  answerMode?: "generated" | "insufficient_evidence" | "local_greeting";
   start: string;
   end?: string;
   latency?: number;
@@ -123,4 +128,25 @@ export type Snapshot = {
   audit: { id: string; action: string; created_at: string }[];
   providerReady: boolean;
   checkedAt: string;
+};
+
+export type Readiness = {
+  checkedAt: string;
+  checks: {
+    id: string;
+    name: string;
+    state: "passed" | "attention";
+    detail: string;
+    source: "PostgreSQL" | "Server configuration" | "OpenAI API";
+  }[];
+  policy: {
+    requestsPerMinute: number;
+    requestsPerDay: number;
+    dailyTokens: number;
+    requireSafety: boolean;
+    blockFlagged: boolean;
+    runTimeoutMs: number;
+  };
+  todayTokens: number;
+  manual: { name: string; detail: string }[];
 };

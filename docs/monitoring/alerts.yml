@@ -1,0 +1,40 @@
+groups:
+  - name: aiforce-platform-health
+    rules:
+      - alert: AIForceAppUnavailable
+        expr: up{job="eassist"} == 0
+        for: 5m
+        labels:
+          severity: critical
+          service: AIForce.Ops
+        annotations:
+          summary: AIForce.Ops website is unavailable
+          description: Prometheus has been unable to scrape the app for five minutes.
+      - alert: AIForceDatabaseUnavailable
+        expr: eassist_database_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Application operations database is unavailable
+      - alert: AIForceWorkerStale
+        expr: time() - aiforce_worker_last_contact_seconds > 180
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: Background collector has stopped reporting
+      - alert: AIForceAlertDeliveryFailed
+        expr: aiforce_alertmanager_delivery_failures > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: Website alerts are waiting for Alertmanager delivery
+      - alert: AIForceIntegrationUnavailable
+        expr: aiforce_integrations{state="error"} > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: An operational integration is unavailable

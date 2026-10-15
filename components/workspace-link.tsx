@@ -1,26 +1,17 @@
 "use client";
 
-import { useTransition, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import { type ReactNode } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import WorkspaceTransition, { type WorkspaceDestination } from "./workspace-transition";
+import { type WorkspaceDestination } from "./workspace-transition";
 
-export default function WorkspaceLink({ href, destination, children, className, title }: {
+export default function WorkspaceLink({ href, children, className, title }: {
   href: string;
   destination: WorkspaceDestination;
   children: ReactNode;
   className?: string;
   title?: string;
 }) {
-  const router = useRouter();
-  const [pending, startNavigation] = useTransition();
-
-  return <>
-    <Link href={href} className={className} title={title} aria-busy={pending} onNavigate={(event) => {
-      event.preventDefault();
-      if (!pending) startNavigation(() => router.push(href));
-    }}>{children}</Link>
-    {pending && createPortal(<WorkspaceTransition destination={destination} />, document.body)}
-  </>;
+  // Let the route's loading boundary own pending UI. A second portal overlay
+  // can outlive the navigation and obscure a destination that already loaded.
+  return <Link href={href} prefetch className={className} title={title}>{children}</Link>;
 }

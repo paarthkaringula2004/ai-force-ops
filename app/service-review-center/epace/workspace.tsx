@@ -1,4 +1,8 @@
 "use client";
+
+import ProjectPicker from "./project-picker";
+import {groupedSources} from '@/lib/epace/knowledge';
+import ThemedSelect from "@/components/themed-select";
 import {
   useCallback,
   useEffect,
@@ -10,7 +14,9 @@ import {
 } from "react";
 import Link from "next/link";
 import WorkspaceLink from "@/components/workspace-link";
+import { permitted, type WorkspaceAccess } from "@/lib/workspace-permissions";
 import ReactMarkdown from "react-markdown";
+import MarkdownEditor from "./markdown-editor";
 import remarkGfm from "remark-gfm";
 import {
   Activity,
@@ -49,6 +55,7 @@ import {
   type Source,
   type Kind,
   type Moderation,
+  type Readiness,
 } from "@/lib/epace/types";
 import {
   percentile,
@@ -69,10 +76,12 @@ type View =
   | "prompts"
   | "lifecycle"
   | "radar"
-  | "access";
+  | "access"
+  | "readiness";
 type Dialog = {
   type:
-    "project" | "record" | "run" | "source" | "feedback" | "compare" | "alert";
+    "project" | "record" | "run" | "source" | "feedback" | "compare" | "alert" | "delete" | "deleteProject";
+  project?: {id:string;name:string};
   record?: RecordRow;
   kind?: Kind;
   source?: Source;
@@ -91,6 +100,10 @@ const navigation = [
   { id: "access", label: "Access & audit", icon: ShieldCheck },
 ] as const;
 const titles: Record<View, [string, string]> = {
+  readiness: [
+    "Deployment readiness",
+    "Check real project settings and see what remains before company use.",
+  ],
   chat: [
     "Chat with your data",
     "Ask questions grounded in your project knowledge.",
@@ -225,6 +238,7 @@ function Field({
             defaultValue={value}
             required={required}
             maxLength={12000}
+            placeholder={`Add ${label.toLowerCase()}…`}
           />
         ) : (
           <input
@@ -425,6 +439,12 @@ export default function EpaceWorkspace({
   userId: string;
 }) {
   const cached = workspaceCache.get(userId);
+  const [member, setMember] = useState<WorkspaceAccess | null>(null);
+  useEffect(() => {
+    let mounted = true;
+    fetch("/api/workspace/access", { cache: "no-store" }).then(response => response.json()).then(data => { if (mounted) setMember(data.member || null); }).catch(() => {});
+    return () => { mounted = false; };
+  }, []);
   const [view, setView] = useState<View>(cached?.view || "chat"),
     [snapshot, setSnapshot] = useState<Snapshot | null>(
       cached?.snapshot || null,
@@ -460,15 +480,23 @@ export default function EpaceWorkspace({
     [streamText, setStreamText] = useState(""),
     [liveQuestion, setLiveQuestion] = useState(""),
     [testText, setTestText] = useState(""),
+    [testStage, setTestStage] = useState<"input" | "output">("input"),
     [testResult, setTestResult] = useState<Moderation | null>(null),
     [sourceContent, setSourceContent] = useState("");
   useEffect(() => {
     workspaceCache.set(userId, { snapshot, pid, threadId, view });
   }, [userId, snapshot, pid, threadId, view]);
+  const chatAbort = useRef<AbortController | null>(null);
+  useEffect(() => () => chatAbort.current?.abort(), []);
   const closeSettings = useCallback(() => setSettingsOpen(false), []);
   const project = snapshot?.project || null,
     records = snapshot?.records || [];
   const recordsOf = (kind: Kind) => records.filter((r) => r.kind === kind);
+  const catalogRecords = recordsOf("component").filter(
+    (record) =>
+      (catalogTab === "Components" || !!record.data.docs) &&
+      JSON.stringify(record.data).toLowerCase().includes(search.toLowerCase()),
+  );
   const reload = useCallback(async (projectId?: string) => {
     const response = await fetch(
       `/api/epace${projectId ? `?project=${projectId}` : ""}`,
@@ -566,12 +594,8 @@ export default function EpaceWorkspace({
     setNotice("");
   };
   const remove = (r: RecordRow) => {
-    if (
-      window.confirm(
-        `Permanently delete ${String(r.data.name || r.kind)}? This cannot be undone.`,
-      )
-    )
-      act({ action: "delete", id: r.id });
+    setError("");
+    setDialog({ type: "delete", record: r });
   };
   const visibleRuns = useMemo(
     () => runsInWindow(snapshot?.records || [], hours),
@@ -588,7 +612,7 @@ export default function EpaceWorkspace({
     chatRuns = records
       .filter(
         (r) =>
-          r.kind === "run" &&
+          !!threadId && r.kind === "run" &&
           (r.data as unknown as RunData).threadId === threadId,
       )
       .slice()
@@ -623,7 +647,9 @@ export default function EpaceWorkspace({
       if (!r.ok) throw new Error(d.error);
       await reload(project!.id);
       setNotice(
-        `Uploaded ${file.name}. ${d.chunks} searchable passages saved.`,
+        d.deduplicated
+          ? `${file.name} is already in this project. No duplicate passages were added.`
+          : `Uploaded ${file.name}. ${d.chunks} searchable passages saved.`,
       );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Upload failed.");
@@ -641,14 +667,19 @@ export default function EpaceWorkspace({
     setChatStatus("Starting run");
     setQuestion("");
     setError("");
+    const abort = new AbortController();
+    chatAbort.current = abort;
+    let completed = false;
     try {
       const r = await fetch("/api/epace/chat", {
+        signal: abort.signal,
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           projectId: project.id,
           threadId: threadId || undefined,
           question: input,
+          requestId: crypto.randomUUID(),
         }),
       });
       if (!r.ok) {
@@ -674,15 +705,28 @@ export default function EpaceWorkspace({
           else if (type === "status") setChatStatus(d.message);
           else if (type === "delta") setStreamText((t) => t + d.text);
           else if (type === "done") {
+            completed = true;
             setStreamText(d.run.output);
             setChatStatus("Run saved");
           } else if (type === "error") throw new Error(d.message);
         }
       }
+      if (!completed)
+        throw new Error(
+          "The connection ended before the answer finished. Check the conversation or trace before sending again.",
+        );
       await reload(project.id);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Chat failed.");
+      setError(
+        abort.signal.aborted
+          ? "Answer stopped. Its trace will show the interrupted run."
+          : e instanceof Error
+            ? e.message
+            : "Chat failed.",
+      );
+      await reload(project.id).catch(() => {});
     } finally {
+      chatAbort.current = null;
       setChatBusy(false);
       setLiveQuestion("");
       setStreamText("");
@@ -723,7 +767,9 @@ export default function EpaceWorkspace({
     ? records.find((r) => r.id === dialog.record!.id) || dialog.record
     : undefined;
   return (
-    <div className="pace">
+    <div
+      className={`pace ${view === "chat" && project ? "pace-chat-page" : ""}`}
+    >
       <header className="pace-top">
         <div className="pace-brand">
           <button
@@ -753,9 +799,13 @@ export default function EpaceWorkspace({
             {connected ? "Live project updates" : "Reconnecting"}
           </span>
           <span className="pace-user pace-muted">{userName}</span>
-          <WorkspaceLink className="pace-btn" href="/service-review-center" destination="Review Center">
+          <WorkspaceLink
+            className="pace-btn"
+            href={member && permitted(member, "operations") ? "/service-review-center" : "/dashboard"}
+            destination={member && permitted(member, "operations") ? "Review Center" : "Agent Studio"}
+          >
             <ArrowLeft size={15} />
-            Review center
+            {member && permitted(member, "operations") ? "Review center" : "Agent Studio"}
           </WorkspaceLink>
         </div>
       </header>
@@ -772,12 +822,12 @@ export default function EpaceWorkspace({
               {item.label}
             </button>
           ))}
-          <small className="bottom">OPERATIONS</small>
+          {member && permitted(member, "integrations") && <><small className="bottom">OPERATIONS</small>
           <Link href="/service-review-center/eassist">
             <Workflow size={18} />
             eAssist operations
             <ChevronRight size={14} />
-          </Link>
+          </Link></>}
         </aside>
         <main className="pace-main">
           <div className="pace-heading">
@@ -789,27 +839,21 @@ export default function EpaceWorkspace({
               <p>{titles[view][1]}</p>
             </div>
             <div className="pace-row">
-              <select
-                aria-label="Project"
-                value={project?.id || ""}
-                disabled={chatBusy}
-                onChange={(e) => {
-                  setPid(e.target.value);
-                  setThreadId("");
+              <ProjectPicker
+                projects={snapshot?.projects || []}
+                value={pid || project?.id || ""}
+                disabled={chatBusy || busy}
+                onSelect={(id) => {
+                  setPid(id); setThreadId(""); setDialog(null);
+                  setSettingsOpen(false); setTestResult(null); setTestText(""); setNotice("");
                 }}
-              >
-                <option value="" disabled>
-                  Select a project
-                </option>
-                {snapshot?.projects.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
+                onDelete={(target)=>{setError("");setDialog({type:"deleteProject",project:target});}}
+              />
               <button
-                className="pace-btn"
+                className="pace-btn project-add"
                 aria-label="Create project"
+                title="Create project"
+                disabled={chatBusy || busy}
                 onClick={() => setDialog({ type: "project" })}
               >
                 <Plus size={17} />
@@ -844,7 +888,7 @@ export default function EpaceWorkspace({
               </button>
             </div>
           )}
-          {!snapshot ? (
+          {!snapshot || (pid && project?.id !== pid) ? (
             <div className="pace-placeholder">
               <RefreshCw size={18} /> Connecting to your workspace…
             </div>
@@ -855,10 +899,11 @@ export default function EpaceWorkspace({
                 detail="Create a project to store knowledge, conversations, safety policies, and platform components."
                 action={
                   <button
-                    className="pace-btn primary"
+                    className="pace-btn primary project-create"
+                    disabled={busy}
                     onClick={() => setDialog({ type: "project" })}
                   >
-                    <Plus size={16} />
+                    <Plus size={16} aria-hidden="true" />
                     Create project
                   </button>
                 }
@@ -883,6 +928,11 @@ export default function EpaceWorkspace({
                         onClick={() => {
                           setThreadId("");
                           setQuestion("");
+                          setError("");
+                          setNotice("");
+                          setLiveQuestion("");
+                          setStreamText("");
+                          setChatStatus("");
                         }}
                       >
                         New chat
@@ -895,15 +945,7 @@ export default function EpaceWorkspace({
                             const r = recordsOf("thread").find(
                               (r) => r.id === threadId,
                             );
-                            if (
-                              r &&
-                              window.confirm(
-                                "Delete this conversation and its runs permanently?",
-                              )
-                            )
-                              act({ action: "delete", id: r.id }, () =>
-                                setThreadId(""),
-                              );
+                            if (r) remove(r);
                           }}
                         >
                           <Trash2 size={15} />
@@ -917,164 +959,191 @@ export default function EpaceWorkspace({
                     </div>
                   </div>
                   <div className="pace-chat">
-                    {!chatRuns.length && !chatBusy ? (
-                      <div className="pace-chat-welcome">
-                        <div className="spark">
-                          <Sparkles size={46} />
+                    <div className="pace-chat-feed">
+                      {!chatRuns.length && !chatBusy ? (
+                        <div className="pace-chat-welcome">
+                          <div className="spark">
+                            <Sparkles size={46} />
+                          </div>
+                          <div className="pace-eyebrow">
+                            CognitiveConnect · Powered by ePACE
+                          </div>
+                          <h2>Chat with your data</h2>
+                          <p>Ask anything or try an example</p>
+                          <div className="pace-suggestions">
+                            {askExamples.map((q) => (
+                              <button key={q} onClick={() => setQuestion(q)}>
+                                {q}
+                                <ArrowRight
+                                  size={16}
+                                  style={{ color: "#9385da" }}
+                                />
+                              </button>
+                            ))}
+                          </div>
+                          <span className="pace-muted">
+                            Upload project knowledge for grounded answers with
+                            citations.
+                          </span>
                         </div>
-                        <div className="pace-eyebrow">
-                          CognitiveConnect · Powered by ePACE
-                        </div>
-                        <h2 style={{ marginTop: 15 }}>Chat with your data</h2>
-                        <p>Ask anything or try an example</p>
-                        <div className="pace-suggestions">
-                          {askExamples.map((q) => (
-                            <button key={q} onClick={() => setQuestion(q)}>
-                              {q}
-                              <ArrowRight
-                                size={16}
-                                style={{ marginTop: 16, color: "#9385da" }}
-                              />
-                            </button>
-                          ))}
-                        </div>
-                        <span className="pace-muted">
-                          Upload project knowledge for grounded answers with
-                          citations.
-                        </span>
-                      </div>
-                    ) : (
-                      <div className="pace-messages">
-                        {chatRuns.map((row) => {
-                          const run = row.data as unknown as RunData;
-                          if (run.status === "pending" && chatBusy) return null;
-                          return (
-                            <div key={row.id} style={{ display: "contents" }}>
-                              <div className="pace-user-message">
-                                {run.input}
-                              </div>
-                              <article className="pace-answer">
-                                <div className="pace-row spread">
-                                  <Sparkles size={20} color="#8b7ce1" />
-                                  <div className="pace-row">
-                                    <span
-                                      className={`pace-badge ${run.status}`}
-                                    >
-                                      {run.status}
-                                    </span>
-                                    <button
-                                      className="pace-icon"
-                                      title="Inspect run and context"
-                                      onClick={() =>
-                                        setDialog({ type: "run", record: row })
-                                      }
-                                    >
-                                      <FlaskConical size={16} />
-                                    </button>
-                                    <button
-                                      className="pace-icon"
-                                      title="Copy answer"
-                                      onClick={() => {
-                                        void navigator.clipboard.writeText(
-                                          run.output,
-                                        );
-                                        setNotice("Answer copied.");
-                                      }}
-                                    >
-                                      <Clipboard size={16} />
-                                    </button>
-                                  </div>
-                                </div>
-                                <div className="pace-answer-content">
+                      ) : (
+                        <div className="pace-messages">
+                          {chatRuns.map((row) => {
+                            const run = row.data as unknown as RunData;
+                            if (run.status === "pending" && chatBusy)
+                              return null;
+                            return (
+                              <div key={row.id} style={{ display: "contents" }}>
+                                <div className="pace-user-message pace-answer-content">
                                   <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                                    {run.output ||
-                                      run.error ||
-                                      "Run in progress…"}
+                                    {run.input}
                                   </ReactMarkdown>
                                 </div>
-                                {run.sources.length > 0 && (
-                                  <div className="pace-citations">
-                                    {run.sources.map((source, i) => (
-                                      <button
-                                        key={source.id}
-                                        onClick={() => void openSource(source)}
+                                <article className="pace-answer">
+                                  <div className="pace-row spread">
+                                    <div className={`pace-ai-output-label${run.status === "pending" ? " is-generating" : ""}`}>
+                                      <Sparkles size={20} aria-hidden="true" />
+                                      <span>AI OUTPUT</span>
+                                    </div>
+                                    <div className="pace-row">
+                                      <span
+                                        className={`pace-badge ${run.status}`}
                                       >
-                                        {i + 1}. {source.name}
+                                        {run.answerMode==='insufficient_evidence'?'No matching evidence':run.status}
+                                      </span>
+                                      <button
+                                        className="pace-icon"
+                                        title="Inspect run and context"
+                                        onClick={() =>
+                                          setDialog({
+                                            type: "run",
+                                            record: row,
+                                          })
+                                        }
+                                      >
+                                        <FlaskConical size={16} />
                                       </button>
-                                    ))}
+                                      <button
+                                        className="pace-icon"
+                                        title="Copy answer"
+                                        onClick={() => {
+                                          void navigator.clipboard.writeText(
+                                            run.output,
+                                          );
+                                          setNotice("Answer copied.");
+                                        }}
+                                      >
+                                        <Clipboard size={16} />
+                                      </button>
+                                    </div>
                                   </div>
-                                )}
-                                {run.status !== "pending" && (
-                                  <div
-                                    className="pace-row spread"
-                                    style={{ marginTop: 16 }}
-                                  >
-                                    <span className="pace-muted">
-                                      {fmt(run.latency, " ms")} ·{" "}
-                                      {fmt(run.totalTokens)} tokens
-                                    </span>
-                                    <button
-                                      className="link"
-                                      onClick={() =>
-                                        setDialog({
-                                          type: "feedback",
-                                          record: row,
-                                        })
-                                      }
+                                  <div className="pace-answer-content">
+                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                      {run.output ||
+                                        run.error ||
+                                        "Run in progress…"}
+                                    </ReactMarkdown>
+                                  </div>
+                                  {run.sources.length > 0 && (
+                                    <div className="pace-citations">
+                                      {groupedSources(run.sources).map(({source,references}) => (
+                                        <button
+                                          key={source.id}
+                                          onClick={() =>
+                                            void openSource(source)
+                                          }
+                                        >
+                                          [{references.join(', ')}] {source.name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                  {run.status !== "pending" && (
+                                    <div
+                                      className="pace-row spread"
+                                      style={{ marginTop: 16 }}
                                     >
-                                      Give feedback
-                                    </button>
-                                  </div>
-                                )}
-                              </article>
-                            </div>
-                          );
-                        })}
-                        {chatBusy && (
-                          <>
-                            <div className="pace-user-message">
-                              {liveQuestion}
-                            </div>
-                            <div className="pace-answer" aria-live="polite">
-                              <Sparkles size={20} color="#8b7ce1" />
-                              <p>{chatStatus}</p>
-                              <div className="pace-answer-content">
-                                <ReactMarkdown>{streamText}</ReactMarkdown>
+                                      <span className="pace-muted">
+                                        {fmt(run.latency, " ms")} ·{" "}
+                                        {fmt(run.totalTokens)} tokens
+                                      </span>
+                                      <button
+                                        className="link"
+                                        onClick={() =>
+                                          setDialog({
+                                            type: "feedback",
+                                            record: row,
+                                          })
+                                        }
+                                      >
+                                        Give feedback
+                                      </button>
+                                    </div>
+                                  )}
+                                </article>
                               </div>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    )}
-                    <form
-                      className="pace-composer"
-                      onSubmit={(e) => void sendQuestion(e)}
-                    >
-                      <textarea
-                        aria-label="Type a new question"
-                        placeholder="Type a new question…"
-                        value={question}
-                        onChange={(e) => setQuestion(e.target.value)}
-                        maxLength={12000}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            void sendQuestion();
-                          }
-                        }}
-                      />
-                      <button
-                        className="pace-btn primary"
-                        type="submit"
-                        disabled={chatBusy || !question.trim()}
-                        aria-label="Send question"
+                            );
+                          })}
+                          {chatBusy && (
+                            <>
+                              <div className="pace-user-message pace-answer-content">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                  {liveQuestion}
+                                </ReactMarkdown>
+                              </div>
+                              <div className="pace-answer" aria-live="polite">
+                                <div className="pace-ai-output-label is-generating">
+                                  <Sparkles size={20} aria-hidden="true" />
+                                  <span>AI OUTPUT</span>
+                                </div>
+                                <p>{chatStatus}</p>
+                                <div className="pace-answer-content">
+                                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                    {streamText}
+                                  </ReactMarkdown>
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                    <div className="pace-composer-dock">
+                      <form
+                        className="pace-composer"
+                        onSubmit={(e) => void sendQuestion(e)}
                       >
-                        <Send size={20} />
-                      </button>
-                    </form>
-                    <div className="pace-muted" style={{ textAlign: "center" }}>
-                      Answers use the selected model. Review citations before
-                      acting on advice.
+                        <MarkdownEditor
+                          value={question}
+                          onChange={setQuestion}
+                          onSend={() => void sendQuestion()}
+                        />
+                        <button
+                          className="pace-btn primary"
+                          type="submit"
+                          disabled={chatBusy || !question.trim()}
+                          aria-label="Send question"
+                        >
+                          <Send size={20} />
+                        </button>
+                        {chatBusy && (
+                          <button
+                            type="button"
+                            className="pace-btn"
+                            onClick={() => chatAbort.current?.abort()}
+                          >
+                            <X size={16} />
+                            Stop answer
+                          </button>
+                        )}
+                      </form>
+                      <div
+                        className="pace-muted"
+                        style={{ textAlign: "center" }}
+                      >
+                        Ctrl/⌘ + Enter to send · Enter for a new line. Review
+                        citations before acting.
+                      </div>
                     </div>
                   </div>
                 </>
@@ -1264,7 +1333,7 @@ export default function EpaceWorkspace({
                     <>
                       <div className="pace-toolbar">
                         <div className="pace-row">
-                          <select
+                          <ThemedSelect
                             aria-label="Time range"
                             value={hours}
                             onChange={(e) => setHours(Number(e.target.value))}
@@ -1282,8 +1351,8 @@ export default function EpaceWorkspace({
                                 {n}
                               </option>
                             ))}
-                          </select>
-                          <select
+                          </ThemedSelect>
+                          <ThemedSelect
                             aria-label="Trace tag"
                             value={tag}
                             onChange={(e) => setTag(e.target.value)}
@@ -1294,7 +1363,7 @@ export default function EpaceWorkspace({
                                 <option key={t}>{t}</option>
                               ),
                             )}
-                          </select>
+                          </ThemedSelect>
                         </div>
                         <span className="pace-muted">
                           Actual records · up to 5,000 recent events
@@ -1326,7 +1395,7 @@ export default function EpaceWorkspace({
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                               />
-                              <select
+                              <ThemedSelect
                                 aria-label="Run status"
                                 value={status}
                                 onChange={(e) => setStatus(e.target.value)}
@@ -1340,8 +1409,8 @@ export default function EpaceWorkspace({
                                 ].map((s) => (
                                   <option key={s}>{s}</option>
                                 ))}
-                              </select>
-                              <select
+                              </ThemedSelect>
+                              <ThemedSelect
                                 aria-label="Run type"
                                 value={runType}
                                 onChange={(e) => setRunType(e.target.value)}
@@ -1351,7 +1420,7 @@ export default function EpaceWorkspace({
                                     <option key={s}>{s}</option>
                                   ),
                                 )}
-                              </select>
+                              </ThemedSelect>
                             </div>
                             <div className="pace-row">
                               <button
@@ -1650,9 +1719,20 @@ export default function EpaceWorkspace({
                   ) : safetyTab === "Try it out" ? (
                     <Panel title="Analyze text against the active policy">
                       <div className="pace-field">
+                        <label htmlFor="testStage">Policy to test</label>
+                        <ThemedSelect id="testStage" value={testStage} disabled={busy} onChange={(e) => {
+                          setTestStage(e.target.value as "input" | "output");
+                          setTestResult(null);
+                        }}>
+                          <option value="input">Input policy</option>
+                          <option value="output">Output policy</option>
+                        </ThemedSelect>
+                      </div>
+                      <div className="pace-field">
                         <label htmlFor="testText">Text to analyze</label>
                         <textarea
                           id="testText"
+                          disabled={busy}
                           value={testText}
                           maxLength={12000}
                           onChange={(e) => setTestText(e.target.value)}
@@ -1665,12 +1745,14 @@ export default function EpaceWorkspace({
                         onClick={() => {
                           setBusy(true);
                           setError("");
+                          setTestResult(null);
                           fetch("/api/epace/moderate", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({
                               projectId: project.id,
                               text: testText,
+                              stage: testStage,
                             }),
                           })
                             .then(async (r) => {
@@ -1731,9 +1813,10 @@ export default function EpaceWorkspace({
                       Threshold breaches and blocked content appear here
                       automatically.
                     </span>
-                    <button className="pace-btn" onClick={openSettings}>
-                      Evaluation rules
-                    </button>
+                    <div className="pace-row">
+                      <button className="pace-btn" disabled={busy} onClick={() => act({action:"testAlert"})}>Send test alert</button>
+                      <button className="pace-btn" onClick={openSettings}>Evaluation rules</button>
+                    </div>
                   </div>
                   <Panel title="Performance & safety alerts">
                     {recordsOf("alert").length ? (
@@ -1763,7 +1846,7 @@ export default function EpaceWorkspace({
                                 </td>
                                 <td>
                                   <span
-                                    className={`pace-badge ${r.data.resolved ? "success" : "error"}`}
+                                    className={`pace-badge ${r.data.resolved ? "success" : r.data.test ? "" : "error"}`}
                                   >
                                     {r.data.resolved ? "Acknowledged" : "Open"}
                                   </span>
@@ -1810,7 +1893,7 @@ export default function EpaceWorkspace({
               {view === "catalog" && (
                 <>
                   <Tabs
-                    values={["Components", "APIs", "Docs"]}
+                    values={["Components", "Docs"]}
                     value={catalogTab}
                     onChange={setCatalogTab}
                   />
@@ -1832,18 +1915,7 @@ export default function EpaceWorkspace({
                     </button>
                   </div>
                   <div className="pace-grid three">
-                    {recordsOf("component")
-                      .filter((r) =>
-                        JSON.stringify(r.data)
-                          .toLowerCase()
-                          .includes(search.toLowerCase()),
-                      )
-                      .filter(
-                        (r) =>
-                          catalogTab === "Components" ||
-                          (catalogTab === "APIs" ? r.data.api : r.data.docs),
-                      )
-                      .map((r) => (
+                    {catalogRecords.map((r) => (
                         <Panel key={r.id}>
                           <div className="pace-card-top">
                             <div className="pace-row spread">
@@ -1913,12 +1985,18 @@ export default function EpaceWorkspace({
                         </Panel>
                       ))}
                   </div>
-                  {!recordsOf("component").length && (
+                  {!catalogRecords.length && (
                     <Panel>
                       <Empty
-                        title="Your catalog is ready"
-                        detail="Register real components and attach their repository, API and documentation links."
+                        title={search ? "No matching entries" : catalogTab === "Docs" ? "No documentation links yet" : "Your catalog is ready"}
+                        detail={search ? "Try another search or clear the search to see all entries." : catalogTab === "Docs" ? "Docs lists the Documentation URL saved on each component. Open Components, choose Configure, and add a documentation link. Uploaded project knowledge is available in Knowledge & indexes." : "Register real components and attach their repository, API and documentation links."}
                       />
+                      {catalogTab === "Docs" && !search && (
+                        <div className="pace-row pace-section">
+                          <button className="pace-btn primary" onClick={() => setCatalogTab("Components")}>Open Components</button>
+                          <button className="pace-btn" onClick={() => chooseView("knowledge")}>Knowledge & indexes</button>
+                        </div>
+                      )}
                     </Panel>
                   )}
                 </>
@@ -1960,7 +2038,7 @@ export default function EpaceWorkspace({
                       />
                       Starred templates
                     </label>
-                    <select
+                    <ThemedSelect
                       aria-label="Filter templates by owner"
                       value={templateOwner}
                       onChange={(e) => setTemplateOwner(e.target.value)}
@@ -1978,8 +2056,8 @@ export default function EpaceWorkspace({
                         .map((owner) => (
                           <option key={owner}>{owner}</option>
                         ))}
-                    </select>
-                    <select
+                    </ThemedSelect>
+                    <ThemedSelect
                       aria-label="Filter templates by category"
                       value={templateCategory}
                       onChange={(e) => setTemplateCategory(e.target.value)}
@@ -1995,7 +2073,7 @@ export default function EpaceWorkspace({
                       ).map((category) => (
                         <option key={category}>{category}</option>
                       ))}
-                    </select>
+                    </ThemedSelect>
                   </div>
                   <div className="pace-grid three">
                     {!starredOnly &&
@@ -2252,7 +2330,11 @@ export default function EpaceWorkspace({
                               )
                             }
                           >
-                            Open workspace
+                            {i === 0
+                              ? "Create component"
+                              : i === 1
+                                ? "Knowledge & indexes"
+                                : "Tracing & monitoring"}
                             <ArrowRight size={14} />
                           </button>
                         </div>
@@ -2352,7 +2434,7 @@ export default function EpaceWorkspace({
                         knowledge updates, and feedback in the linked
                         workspaces.
                       </p>
-                      <div className="pace-row">
+                      <div className="pace-row pace-lifecycle-actions">
                         <button className="pace-btn" onClick={openSettings}>
                           Runtime model
                         </button>
@@ -2376,13 +2458,13 @@ export default function EpaceWorkspace({
                         connections. Provider credentials must be configured
                         before live actions can run.
                       </p>
-                      <Link
-                        className="pace-btn primary"
+                      {member && permitted(member, "integrations") ? <Link
+                        className="pace-btn primary pace-lifecycle-link"
                         href="/service-review-center/eassist"
                       >
                         Open eAssist
                         <ArrowRight size={15} />
-                      </Link>
+                      </Link> : <button disabled title="Admin access required" className="pace-btn pace-lifecycle-link" style={{ cursor: "not-allowed", opacity: 0.55 }}>Open eAssist · Admin only</button>}
                     </Panel>
                   </div>
                 </>
@@ -2449,8 +2531,14 @@ export default function EpaceWorkspace({
                   </div>
                 </>
               )}
+              {view === "readiness" && (
+                <ReadinessPanel
+                  projectId={project.id}
+                  openSettings={openSettings}
+                />
+              )}
               {view === "access" && (
-                <>
+                <div className="pace-access-panels">
                   <Panel title="Workspace access">
                     <p>
                       This project belongs to your signed-in account. All
@@ -2487,12 +2575,65 @@ export default function EpaceWorkspace({
                       </table>
                     </div>
                   </Panel>
-                </>
+                </div>
               )}
             </>
           )}
         </main>
       </div>
+      {dialog?.type === "deleteProject" && dialog.project && (
+        <Modal title="Delete project?" onClose={()=>{if(!busy) closeDialog();}}>
+          <p>Permanently delete <strong>{dialog.project.name}</strong> and its documents, chats, runs, alerts, settings, and audit history? This cannot be undone.</p>
+          {error && <p role="alert" className="pace-error pace-section">{error}</p>}
+          <div className="pace-row pace-section">
+            <button className="pace-btn" disabled={busy} onClick={closeDialog}>Cancel</button>
+            <button className="pace-btn danger" disabled={busy || chatBusy} onClick={async()=>{
+              const target=dialog.project!;
+              setBusy(true); setError("");
+              try {
+                const response=await fetch("/api/epace",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({action:"deleteProject",projectId:target.id})});
+                const result=await response.json();
+                if(!response.ok) throw new Error(result.error || "Could not delete this project.");
+                const next=target.id===project?.id ? snapshot?.projects.find(item=>item.id!==target.id)?.id || "" : project?.id || "";
+                await reload(next); setPid(next);
+                if(target.id===project?.id){setThreadId("");setSettingsOpen(false);setTestResult(null);setTestText("");}
+                setDialog(null); setNotice(`Deleted project ${target.name}.`);
+              } catch(e){setError(e instanceof Error ? e.message : "Could not delete this project.");}
+              finally{setBusy(false);}
+            }}>{busy ? "Deleting…" : "Delete project"}</button>
+          </div>
+        </Modal>
+      )}
+      {dialog?.type === "delete" && dialog.record && (
+        <Modal
+          title={dialog.record.kind === "thread" ? "Clear this chat?" : "Delete this item?"}
+          onClose={() => { if (!busy) closeDialog(); }}
+        >
+          <p>
+            {dialog.record.kind === "thread"
+              ? "This permanently deletes this conversation, its saved responses, and related alerts. Your project documents and settings will stay."
+              : `Permanently delete ${String(dialog.record.data.name || dialog.record.kind)}? This cannot be undone.`}
+          </p>
+          {error && <p role="alert" className="pace-error">{error}</p>}
+          <div className="pace-row" style={{ justifyContent: "flex-end", marginTop: 24 }}>
+            <button className="pace-btn" disabled={busy} onClick={closeDialog}>Cancel</button>
+            <button className="pace-btn primary" disabled={busy} onClick={() => {
+              const target = dialog.record!;
+              void mutate({ action: "delete", id: target.id }).then(() => {
+                if (target.kind === "thread" && target.id === threadId) {
+                  setThreadId("");
+                  setQuestion("");
+                }
+                closeDialog();
+                setNotice(target.kind === "thread" ? "Conversation cleared." : "Item deleted.");
+              }).catch(() => {});
+            }}>
+              <Trash2 size={15} />
+              {busy ? "Deleting…" : dialog.record.kind === "thread" ? "Clear chat" : "Delete"}
+            </button>
+          </div>
+        </Modal>
+      )}
       {dialog?.type === "project" && (
         <Modal title="Create a project" onClose={closeDialog}>
           <form
@@ -2626,7 +2767,7 @@ export default function EpaceWorkspace({
             </p>
             {metrics.map((m) => (
               <Field key={m} name={m} label={m}>
-                <select
+                <ThemedSelect
                   id={m}
                   name={m}
                   defaultValue={Number(
@@ -2637,7 +2778,7 @@ export default function EpaceWorkspace({
                   {[1, 2, 3, 4, 5].map((n) => (
                     <option key={n}>{n}</option>
                   ))}
-                </select>
+                </ThemedSelect>
               </Field>
             ))}
             <button className="pace-btn primary" disabled={busy}>
@@ -2655,7 +2796,7 @@ export default function EpaceWorkspace({
         <Modal title={String(runDialog.data.name)} onClose={closeDialog} wide>
           <div className="pace-row">
             <span className="pace-badge">
-              Run ID: {String(runDialog.data.runId)}
+              {runDialog.data.test ? "Test notification" : `Run ID: ${String(runDialog.data.runId)}`}
             </span>
             <span className="pace-badge">Delivery: in-app</span>
           </div>
@@ -2704,7 +2845,7 @@ export default function EpaceWorkspace({
           </header>
           <div className="pace-field">
             <label>Runtime model</label>
-            <select
+            <ThemedSelect
               aria-label="Runtime model"
               value={draft.model}
               onChange={(e) => setDraft({ ...draft, model: e.target.value })}
@@ -2713,7 +2854,7 @@ export default function EpaceWorkspace({
               {models.map((m) => (
                 <option key={m}>{m}</option>
               ))}
-            </select>
+            </ThemedSelect>
             {modelsError && (
               <span className="pace-error-line">{modelsError}</span>
             )}
@@ -2726,7 +2867,7 @@ export default function EpaceWorkspace({
           </div>
           <div className="pace-field">
             <label>Retrieval mode</label>
-            <select
+            <ThemedSelect
               aria-label="Retrieval mode"
               value={draft.retrieval}
               onChange={(e) =>
@@ -2739,10 +2880,15 @@ export default function EpaceWorkspace({
               {["Keyword", "Hybrid", "Semantic"].map((v) => (
                 <option key={v}>{v}</option>
               ))}
-            </select>
+            </ThemedSelect>
           </div>
           {(
-            ["semanticRanker", "semanticCaptions", "contentSafety"] as const
+            [
+              "semanticRanker",
+              "semanticCaptions",
+              "contentSafety",
+              "requireEvidence",
+            ] as const
           ).map((k) => (
             <label className="pace-row" style={{ margin: "18px 0" }} key={k}>
               <input
@@ -2754,13 +2900,15 @@ export default function EpaceWorkspace({
                 ? "Enable semantic ranker"
                 : k === "semanticCaptions"
                   ? "Enable semantic captions"
-                  : "Enable content safety"}
+                  : k === "requireEvidence"
+                    ? "Require project knowledge before generating an answer"
+                    : "Enable content safety"}
             </label>
           ))}
           {uploadButton}
           <div className="pace-field pace-section">
             <label>Content filter</label>
-            <select
+            <ThemedSelect
               aria-label="Active content filter"
               value={draft.filterId}
               onChange={(e) => setDraft({ ...draft, filterId: e.target.value })}
@@ -2771,7 +2919,7 @@ export default function EpaceWorkspace({
                   {String(r.data.name)}
                 </option>
               ))}
-            </select>
+            </ThemedSelect>
           </div>
           {metrics.map((m) => (
             <div
@@ -2799,6 +2947,24 @@ export default function EpaceWorkspace({
               />
             </div>
           ))}
+          <div className="pace-field">
+            <label htmlFor="outputLimit">
+              Maximum answer tokens (128–8,000)
+            </label>
+            <input
+              id="outputLimit"
+              type="number"
+              min={128}
+              max={8000}
+              value={draft.maxOutputTokens}
+              onChange={(e) =>
+                setDraft({ ...draft, maxOutputTokens: Number(e.target.value) })
+              }
+            />
+            <small className="pace-muted">
+              Caps answer length. Reasoning models may need a larger limit.
+            </small>
+          </div>
           <div className="pace-field">
             <label htmlFor="sampling">Evaluation sampling rate</label>
             <input
@@ -3147,7 +3313,7 @@ function SafetyMonitor({
           {all.length} text safety {all.length === 1 ? "check" : "checks"} in
           this period
         </span>
-        <select
+        <ThemedSelect
           aria-label="Safety time range"
           value={hours}
           onChange={(e) => onHours(Number(e.target.value))}
@@ -3161,7 +3327,7 @@ function SafetyMonitor({
               {n}
             </option>
           ))}
-        </select>
+        </ThemedSelect>
       </div>
       <h2>Overview</h2>
       <div className="pace-grid">
@@ -3383,7 +3549,11 @@ function RunDetails({
                 </div>
               )}
               <h3>Input</h3>
-              <div className="pace-source">{run.input}</div>
+              <div className="pace-answer-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {run.input}
+                </ReactMarkdown>
+              </div>
               <h3 className="pace-section">Output</h3>
               <div className="pace-answer-content">
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -3505,7 +3675,7 @@ function Compare({ row, runs }: { row: RecordRow; runs: RecordRow[] }) {
   );
   return (
     <>
-      <select
+      <ThemedSelect
         aria-label="Compare with run"
         value={other}
         onChange={(e) => setOther(e.target.value)}
@@ -3519,7 +3689,7 @@ function Compare({ row, runs }: { row: RecordRow; runs: RecordRow[] }) {
               {new Date(r.created_at).toLocaleString()}
             </option>
           ))}
-      </select>
+      </ThemedSelect>
       <div className="pace-grid pace-section">
         {[row, runs.find((r) => r.id === other)]
           .filter((r): r is RecordRow => !!r)
@@ -3537,7 +3707,9 @@ function Compare({ row, runs }: { row: RecordRow; runs: RecordRow[] }) {
                 <div className="pace-source">{d.input}</div>
                 <h3 className="pace-section">Output</h3>
                 <div className="pace-answer-content">
-                  <ReactMarkdown>{d.output}</ReactMarkdown>
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                    {d.output}
+                  </ReactMarkdown>
                 </div>
                 <h3 className="pace-section">Scores</h3>
                 <div className="pace-source">
@@ -3631,7 +3803,7 @@ function FilterEditor({
                 <span>
                   {cat} <small className="pace-muted">Text</small>
                 </span>
-                <select
+                <ThemedSelect
                   aria-label={`${cat} action`}
                   value={rules[cat].action}
                   onChange={(e) =>
@@ -3644,8 +3816,8 @@ function FilterEditor({
                   {["Block", "Annotate"].map((v) => (
                     <option key={v}>{v}</option>
                   ))}
-                </select>
-                <select
+                </ThemedSelect>
+                <ThemedSelect
                   aria-label={`${cat} threshold`}
                   value={rules[cat].threshold}
                   onChange={(e) =>
@@ -3658,7 +3830,7 @@ function FilterEditor({
                   {["Low", "Medium", "High"].map((v) => (
                     <option key={v}>{v}</option>
                   ))}
-                </select>
+                </ThemedSelect>
               </div>
             );
           })}
@@ -3788,7 +3960,7 @@ function RecordEditor({
       {kind === "assessment" ? (
         <>
           <Field label="Lifecycle stage" name="stage">
-            <select
+            <ThemedSelect
               id="stage"
               name="stage"
               defaultValue={String(d.stage || "Design & build")}
@@ -3800,7 +3972,7 @@ function RecordEditor({
               ].map((v) => (
                 <option key={v}>{v}</option>
               ))}
-            </select>
+            </ThemedSelect>
           </Field>
           {pillars.map((key, i) => {
             const value = (
@@ -3814,7 +3986,7 @@ function RecordEditor({
               >
                 <h3>{key}</h3>
                 <Field label="Capability rating" name={`score${i}`}>
-                  <select
+                  <ThemedSelect
                     id={`score${i}`}
                     name={`score${i}`}
                     defaultValue={value?.score || 0}
@@ -3831,7 +4003,7 @@ function RecordEditor({
                         {v} · {n}
                       </option>
                     ))}
-                  </select>
+                  </ThemedSelect>
                 </Field>
                 <Field
                   label="Evidence and observed gaps (required for a rating above 0)"
@@ -3862,7 +4034,7 @@ function RecordEditor({
                 required
               />
               <Field label="Model (optional)" name="model">
-                <select
+                <ThemedSelect
                   id="model"
                   name="model"
                   defaultValue={String(d.model || "")}
@@ -3871,7 +4043,7 @@ function RecordEditor({
                   {models.map((m) => (
                     <option key={m}>{m}</option>
                   ))}
-                </select>
+                </ThemedSelect>
               </Field>
             </>
           ) : (
@@ -3891,7 +4063,7 @@ function RecordEditor({
               </div>
               {kind === "radar" ? (
                 <Field label="Adoption ring" name="ring">
-                  <select
+                  <ThemedSelect
                     id="ring"
                     name="ring"
                     defaultValue={String(d.ring || "Assess")}
@@ -3899,12 +4071,12 @@ function RecordEditor({
                     {["Adopt", "Trial", "Assess", "Hold"].map((v) => (
                       <option key={v}>{v}</option>
                     ))}
-                  </select>
+                  </ThemedSelect>
                 </Field>
               ) : (
                 <>
                   <Field label="Lifecycle" name="lifecycle">
-                    <select
+                    <ThemedSelect
                       id="lifecycle"
                       name="lifecycle"
                       defaultValue={String(d.lifecycle || "Design & build")}
@@ -3916,7 +4088,7 @@ function RecordEditor({
                       ].map((v) => (
                         <option key={v}>{v}</option>
                       ))}
-                    </select>
+                    </ThemedSelect>
                   </Field>
                   <Field
                     label="Repository URL"
@@ -3958,5 +4130,192 @@ function RecordEditor({
             : "Save record"}
       </button>
     </form>
+  );
+}
+
+function ReadinessPanel({
+  projectId,
+  openSettings,
+}: {
+  projectId: string;
+  openSettings: () => void;
+}) {
+  const [data, setData] = useState<Readiness | null>(null),
+    [error, setError] = useState(""),
+    [busy, setBusy] = useState(false),
+    [notice, setNotice] = useState("");
+  const load = useCallback(
+    async (signal?: AbortSignal) => {
+      const r = await fetch(`/api/epace/readiness?project=${projectId}`, {
+        cache: "no-store",
+        signal,
+      });
+      const d = await r.json();
+      if (!r.ok) throw new Error(d.error);
+      setData(d);
+    },
+    [projectId],
+  );
+  useEffect(() => {
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      void load(abort.signal).catch((e) => {
+        if (!abort.signal.aborted) setError(e.message);
+      });
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      abort.abort();
+    };
+  }, [load]);
+  const refresh = async (test = false) => {
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      if (test) {
+        const r = await fetch("/api/epace/readiness", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ projectId }),
+          signal: AbortSignal.timeout(100000),
+        });
+        const d = await r.json();
+        if (!r.ok) {
+          await load();
+          throw new Error(d.error);
+        }
+        if (d.readiness) setData(d.readiness);
+        setNotice(d.message);
+        if (!d.readiness) await load();
+      } else await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not check readiness.");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <>
+      <Panel
+        title="Project checks"
+        action={
+          <button
+            className="pace-btn"
+            disabled={busy}
+            onClick={() => void refresh()}
+          >
+            <RefreshCw size={15} />
+            Refresh checks
+          </button>
+        }
+      >
+        <p>
+          Results come from live server APIs. Each row shows its source:
+          PostgreSQL, server configuration or a real OpenAI request. The
+          explanation is UI text; OpenAI does not invent database counts or
+          readiness statuses.
+        </p>
+        {error && (
+          <div className="pace-alert" role="alert">
+            {error}
+          </div>
+        )}
+        {notice && (
+          <div className="pace-note" role="status">
+            {notice}
+          </div>
+        )}
+        {!data && !error && <p>Checking project…</p>}
+        {data && (
+          <>
+            <div className="pace-scroll">
+              <table className="pace-table pace-readiness-table">
+                <thead>
+                  <tr>
+                    <th>Check</th>
+                    <th>Result</th>
+                    <th>Details</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.checks.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        {c.name}
+                        <br />
+                        <small className="pace-muted">Source: {c.source}</small>
+                      </td>
+                      <td>
+                        <span className="pace-badge">
+                          {c.state === "passed" ? "Passed" : "Needs attention"}
+                        </span>
+                      </td>
+                      <td>
+                        {c.detail.replace(
+                          /\d{4}-\d{2}-\d{2}T[\d:.]+Z/g,
+                          (value) => new Date(value).toLocaleString(),
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <p className="pace-muted">
+              Checked {new Date(data.checkedAt).toLocaleString()}
+            </p>
+          </>
+        )}
+        <div className="pace-row pace-section">
+          <button
+            className="pace-btn primary"
+            disabled={busy}
+            onClick={() => void refresh(true)}
+          >
+            {busy ? "Checking…" : "Test provider"}
+          </button>
+          <button className="pace-btn" onClick={openSettings}>
+            Developer settings
+          </button>
+        </div>
+        <p className="pace-muted">
+          Test provider sends small, real diagnostic requests to your selected
+          models, moderation and, when needed, embeddings. It uses your API
+          allowance. It also refreshes every database and configuration check.
+          No project documents are sent.
+        </p>
+      </Panel>
+      {data && (
+        <>
+          <Panel title="Usage protection">
+            <p>
+              {data.policy.requestsPerMinute} requests per minute ·{" "}
+              {data.policy.requestsPerDay} requests per day ·{" "}
+              {data.policy.dailyTokens.toLocaleString()} provider-reported
+              tokens per day, per account.
+            </p>
+            <p>
+              Recorded today: {data.todayTokens.toLocaleString()} tokens. Daily
+              limits reset at midnight UTC. Answers have a{" "}
+              {Math.round(data.policy.runTimeoutMs / 60000)}-minute deadline.
+            </p>
+            <p className="pace-muted">
+              Token limits stop subsequent provider stages after recorded usage
+              reaches the allowance. In-flight requests and interrupted calls
+              may not be fully accounted for. Set provider spending limits too.
+            </p>
+          </Panel>
+          <Panel title="Before company use">
+            {data.manual.map((c) => (
+              <div className="pace-section" key={c.name}>
+                <h3>{c.name}</h3>
+                <p>{c.detail}</p>
+              </div>
+            ))}
+          </Panel>
+        </>
+      )}
+    </>
   );
 }

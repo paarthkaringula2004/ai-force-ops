@@ -5,7 +5,10 @@ import ServiceReviewCenter from "./service-review-center";
 
 export const metadata: Metadata = { title: "Service Review Center", description: "AIForce.Ops service health and value dashboards." };
 
-export default async function ServiceReviewCenterPage() {
+export default async function ServiceReviewCenterPage({searchParams}:PageProps<'/service-review-center'>) {
   if (!(await getCurrentSession())?.user) redirect("/");
-  return <ServiceReviewCenter />;
+  const query=await searchParams;
+  const views=['services','value','observability','geo','aiops','executive','details','sources'] as const;
+  const view=views.find(view=>view===query.view)||'services';
+  return <ServiceReviewCenter initialView={view} />;
 }

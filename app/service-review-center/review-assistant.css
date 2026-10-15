@@ -1,0 +1,78 @@
+.review-bot-toolbar{display:flex;gap:8px;padding:10px 20px;border-bottom:1px solid #e5e7f1;background:white;flex-shrink:0}
+
+.review-bot-toolbar button{display:flex;align-items:center;gap:6px;border:1px solid #e5e2f3;border-radius:9px;padding:7px 10px;font-size:12px;color:#556480;background:#fff}
+
+.review-bot-toolbar button:hover:not(:disabled){background:#f3f0ff;color:#6351e9}
+
+.review-bot-toolbar button:disabled{opacity:.5}
+
+.review-bot-history{padding:8px 20px;background:#fff;border-bottom:1px solid #e5e7f1;max-height:180px;overflow:auto;flex-shrink:0}
+
+.review-bot-history button{display:block;width:100%;text-align:left;padding:8px;border-radius:8px;font-size:12px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+
+.review-bot-history button:hover,.review-bot-history button[aria-current]{background:#eeeaff;color:#6351e9}
+
+.review-bot-scans{margin-bottom:18px;border:1px solid #e2ddfa;border-radius:12px;background:#fff;padding:12px}
+
+.review-bot-scans>summary{font-size:12px;font-weight:600;color:#6351e9;cursor:pointer}
+
+.review-bot-scans[open]>summary{margin-bottom:12px}
+
+.review-bot-composer{display:flex;align-items:flex-end;gap:10px;border:1px solid #e1dcf4;border-radius:18px;padding:12px;background:#fff;box-shadow:0 3px 12px #25326208}
+
+.review-bot-composer:focus-within{border-color:#9a89ee;box-shadow:0 0 0 3px #6351e90b}
+
+.review-bot-composer .pace-rich-input{height:82px;max-height:140px;font-size:14px;line-height:1.6}
+
+.review-bot-send{display:flex;align-items:center;justify-content:center;flex-shrink:0;width:40px;height:40px;border-radius:12px;color:white;background:#6351e9}
+
+.review-bot-send:disabled{opacity:.4}
+
+.review-super-bot .pace-selection-toolbar{z-index:100001}
+
+.review-bot-toolbar button:focus-visible,.review-bot-history button:focus-visible,.review-bot-send:focus-visible{outline:2px solid #a99bff;outline-offset:2px}
+
+
+
+.security-card{border:1px solid #e0e4f1;border-radius:14px;background:white;padding:16px;font-size:12px;line-height:1.7;color:#233b58;margin-bottom:12px}
+
+.security-card-heading{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;color:#5240c5}
+
+.security-live,.security-offline{margin-left:auto;font-size:10px;border-radius:20px;padding:3px 8px;background:#ecfdf5;color:#047857}
+
+.security-offline{background:#fff7ed;color:#b45309}
+
+.security-muted{font-size:11px;color:#718097;line-height:1.6;margin-top:6px}
+
+.security-button{display:inline-flex;align-items:center;justify-content:center;gap:5px;font-size:11px;border:1px solid #e3e1f2;border-radius:8px;padding:6px 10px;background:white;color:#6351e9;cursor:pointer}
+
+.security-button:hover,.security-button[aria-pressed=true]{background:#efebff}
+
+.security-button:disabled{opacity:.5;cursor:default}
+
+.security-primary{background:#6351e9;color:white}
+
+.security-field{display:flex;flex-direction:column;gap:5px;font-size:11px;color:#63728a;margin-top:12px}
+
+.security-field input,.security-field select{border:1px solid #e0e4f1;border-radius:8px;background:white;padding:9px;color:#233b58;min-width:0;width:100%}
+
+.security-field input:focus,.security-field select:focus{outline:2px solid #b5a9f7;outline-offset:1px}
+
+.security-alert{padding:14px 0;border-top:1px solid #eef0f6;font-size:12px}
+
+.security-severity{background:#fff7ed;color:#b45309;font-size:10px;border-radius:6px;padding:2px 6px}
+
+.security-bot-alert-strip{display:flex;justify-content:space-between;gap:10px;border:1px solid #dfd9f7;background:#f0edff;padding:10px 12px;border-radius:10px;font-size:11px;color:#6552cf;margin-bottom:18px}
+
+.security-bot-alert-strip button{font-weight:600}
+
+
+.security-card progress{appearance:none;height:5px;border:0;border-radius:10px;overflow:hidden;background:#edeaf7}
+.security-card progress::-webkit-progress-bar{background:#edeaf7;border-radius:10px}
+.security-card progress::-webkit-progress-value{background:#7361e9;border-radius:10px;transition:width .3s}
+.security-card progress::-moz-progress-bar{background:#7361e9;border-radius:10px}
+
+.review-user-message{overflow-wrap:anywhere}
+.review-user-message strong{font-weight:650}
+.review-user-message pre{background:#ffffff80}
+.review-user-message p{white-space:pre-wrap}

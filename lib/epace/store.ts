@@ -47,9 +47,9 @@ export function text(value: unknown, max = 12000, required = false): string {
   return value.trim();
 }
 export function settings(value: unknown): Settings {
-  const v = value as Settings;
-  if (!v || typeof v !== "object")
+  if (!value || typeof value !== "object" || Array.isArray(value))
     throw new PaceError("Invalid project settings.");
+  const v = { ...defaultSettings, ...(value as Settings) };
   if (
     !["Hybrid", "Keyword", "Semantic"].includes(v.retrieval) ||
     typeof v.semanticRanker !== "boolean" ||
@@ -73,10 +73,27 @@ export function settings(value: unknown): Settings {
     v.retention > 365
   )
     throw new PaceError("Invalid sampling rate or retention days.");
+  if (
+    !Number.isInteger(v.maxOutputTokens) ||
+    v.maxOutputTokens < 128 ||
+    v.maxOutputTokens > 8000 ||
+    typeof v.requireEvidence !== "boolean"
+  )
+    throw new PaceError(
+      "Output limit must be 128–8,000 tokens and evidence policy must be set.",
+    );
   if (!Array.isArray(v.tags) || v.tags.length > 20)
     throw new PaceError("Use at most 20 tags.");
   return {
-    ...v,
+    retrieval: v.retrieval,
+    semanticRanker: v.semanticRanker,
+    semanticCaptions: v.semanticCaptions,
+    contentSafety: v.contentSafety,
+    thresholds: v.thresholds,
+    sampling: v.sampling,
+    retention: v.retention,
+    maxOutputTokens: v.maxOutputTokens,
+    requireEvidence: v.requireEvidence,
     model: text(v.model, 200),
     evaluationModel: text(v.evaluationModel, 200),
     prompt: text(v.prompt),
@@ -149,7 +166,7 @@ export async function snapshot(user: string, pid?: string | null) {
       [user, p.id, p.settings.retention],
     );
     await db.query(
-      `UPDATE epace_records SET data=data || jsonb_build_object('status','error','error','The server was interrupted before this run completed.','end',now()),updated_at=now() WHERE user_id=$1 AND project_id=$2 AND kind='run' AND data->>'status'='pending' AND created_at < now()-interval '15 minutes'`,
+      `UPDATE epace_records SET data=data || jsonb_build_object('status','error','output','','error','The server was interrupted before this run completed.','end',now()),updated_at=now() WHERE user_id=$1 AND project_id=$2 AND kind='run' AND data->>'status'='pending' AND created_at < now()-interval '15 minutes'`,
       [user, p.id],
     );
   }

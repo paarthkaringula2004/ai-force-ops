@@ -1,8 +1,13 @@
+"use client";
+import {useEffect,useState} from "react";
 import { Bot, Command, Layers3, LoaderCircle, Sparkles } from "lucide-react";
 
 export type WorkspaceDestination = "eAssist" | "ePACE" | "Review Center" | "Agent Studio";
 
-export default function WorkspaceTransition({ destination }: { destination: WorkspaceDestination }) {
+export default function WorkspaceTransition({ destination, href }: { destination: WorkspaceDestination; href?:string }) {
+  const [slow,setSlow]=useState(false);
+  useEffect(()=>{const timer=setTimeout(()=>setSlow(true),10000);return()=>clearTimeout(timer);},[]);
+  const recovery=href||{"eAssist":"/service-review-center/eassist","ePACE":"/service-review-center/epace","Review Center":"/service-review-center","Agent Studio":"/dashboard"}[destination];
   const Icon = { eAssist: Bot, ePACE: Sparkles, "Review Center": Layers3, "Agent Studio": Command }[destination];
 
   return (
@@ -13,8 +18,9 @@ export default function WorkspaceTransition({ destination }: { destination: Work
           <Icon aria-hidden="true" className="size-9" />
         </div>
         <h2 className="text-xl font-semibold tracking-tight text-slate-900">Opening {destination}…</h2>
-        <p className="mt-2 text-sm text-slate-500">Preparing your workspace</p>
+        <p className="mt-2 text-sm text-slate-500">{slow?"This is taking longer than expected. You can reopen the page directly.":"Preparing your workspace"}</p>
         <LoaderCircle aria-hidden="true" className="mx-auto mt-6 size-5 text-indigo-600 motion-safe:animate-spin" />
+        {slow&&<a href={recovery} className="mt-6 inline-flex rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white">Open {destination}</a>}
       </div>
     </div>
   );

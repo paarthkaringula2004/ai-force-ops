@@ -1,11 +1,13 @@
-import { db } from '@/lib/db';
+import {sharedOperationsOwner} from '@/lib/eassist/organization-context';
+import {organizationAlertRevision} from '@/lib/eassist/organization-alerts';
 import { getRequestSession } from '@/lib/request-session';
 import { syncUser } from '@/lib/eassist/sync';
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 export async function GET(request:Request){
   const session=await getRequestSession(request);if(!session?.user)return new Response('Unauthorized',{status:401});
-  const user=session.user.id,encoder=new TextEncoder();let cancelled=false;
+  let user:string;try{user=await sharedOperationsOwner(session.user.id);}catch{return new Response('Admin access required',{status:403});}
+  const encoder=new TextEncoder();let cancelled=false;
   const stream=new ReadableStream({
     async start(controller){
       let last='',ticks=0;let syncing:Promise<void>|undefined;
@@ -15,8 +17,7 @@ export async function GET(request:Request){
         // Short-lived streams reauthenticate on reconnection. Browsers retain the displayed snapshot.
         while(!cancelled&&!request.signal.aborted&&ticks<50){
           if(ticks%5===0&&!syncing)syncing=syncUser(user).catch(()=>{}).finally(()=>{syncing=undefined;});
-          const result=await db.query('SELECT revision::text FROM eassist_revisions WHERE user_id=$1',[user]);
-          const revision=result.rows[0]?.revision||'0';
+          const revision=await organizationAlertRevision();
           if(revision!==last){send(`event: change\ndata: ${JSON.stringify({revision})}\n\n`);last=revision;}
           if(ticks%10===0)send(': heartbeat\n\n');
           await new Promise(r=>setTimeout(r,1000));ticks++;

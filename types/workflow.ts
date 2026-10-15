@@ -1,6 +1,11 @@
 import type { Edge, Node } from "@xyflow/react";
 
 export type WorkflowNodeKind =
+  | "ModelNode"
+  | "MemoryNode"
+  | "ToolsNode"
+  | "AgentsNode"
+  | "ReferenceNode"
   | "StartNode"
   | "AgentNode"
   | "EndNode"
@@ -14,6 +19,12 @@ export type WorkflowNodeData = {
   bgColor?: string;
   instructions?: string;
   modelId?: string;
+  temperature?: number;
+  topP?: number;
+  frequencyPenalty?: number;
+  presencePenalty?: number;
+  maxOutputTokens?: number;
+  historyMessages?: number;
   includeHistory?: boolean;
   output?: "Text" | "Json";
   schema?: string;

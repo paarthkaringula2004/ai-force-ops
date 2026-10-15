@@ -73,7 +73,7 @@ export async function PUT(request: Request, context: RouteContext) {
       const settings = { ...asRecord(data.settings) };
       const draft = typeof data.apiKeyDraft === "string" ? data.apiKeyDraft : typeof data.apiKey === "string" ? data.apiKey : typeof settings.apiKey === "string" ? settings.apiKey : "";
       if (draft.length > 4096) throw new Error("API keys must be 4,096 characters or fewer.");
-      if (node.type === "ApiNode" && draft.trim()) apiKeys.push({ nodeId: node.id, encryptedValue: encryptAgentApiKey(draft) });
+      if ((node.type === "ApiNode" || node.data.referenceKind === "tool") && draft.trim()) apiKeys.push({ nodeId: node.id, encryptedValue: encryptAgentApiKey(draft) });
       if (data.clearApiKey === true) clearedKeys.push(node.id);
       delete data.apiKey;
       delete data.apiKeyDraft;

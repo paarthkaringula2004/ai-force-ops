@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import { studioDependencies } from "@/lib/agent-studio-graph";
+import { isActualAgent, validateAgentFlow, agentReferences } from "@/lib/agent-flow";
+import type { WorkflowGraph } from "@/types/workflow";
+import { requireSameOrigin } from "@/lib/service-review/ingestion";
+import { workspaceAccess } from "@/lib/workspace-access";
+import { permitted } from "@/lib/workspace-permissions";
 import { db } from "@/lib/db";
 import { getRequestSession } from "@/lib/request-session";
 
@@ -37,11 +43,13 @@ export async function POST(request: Request, context: Context) {
   if (!session?.user) return Response.json({ error: "Sign in to publish this agent." }, { status: 401 });
   const { agentId } = await context.params;
   if (!UUID.test(agentId)) return Response.json({ error: "Agent not found." }, { status: 404 });
+  if (!permitted(await workspaceAccess(session.user.id), "agent_studio")) return Response.json({ error: "Agent Studio access required." }, { status: 403 });
+  try { requireSameOrigin(request); } catch { return Response.json({ error: "Invalid origin." }, { status: 403 }); }
   const client = await db.connect();
   try {
     await client.query("BEGIN");
     const agent = await client.query(
-      `SELECT id, name, purpose, model_id AS "modelId", instructions FROM agents WHERE user_id = $1 AND id = $2 FOR UPDATE`,
+      `SELECT id, name, purpose, model_id AS "modelId", instructions FROM agents WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL FOR UPDATE`,
       [session.user.id, agentId]);
     if (!agent.rowCount) { await client.query("ROLLBACK"); return Response.json({ error: "Agent not found." }, { status: 404 }); }
     const previous = await client.query<{ publicId: string; version: number }>(
@@ -55,7 +63,8 @@ export async function POST(request: Request, context: Context) {
     const agentNode = nodes.find((node) => node.type === "AgentNode");
     const agentData = agentNode?.data ?? {};
     const legacy = agentData.settings && typeof agentData.settings === "object" ? agentData.settings as Record<string, unknown> : {};
-    const effectiveModel = typeof agentData.modelId === "string" && agentData.modelId
+    const modelData = studioDependencies(graph as WorkflowGraph).model?.data;
+    const effectiveModel = typeof modelData?.modelId === "string" && modelData.modelId ? modelData.modelId : typeof agentData.modelId === "string" && agentData.modelId
       ? agentData.modelId
       : typeof legacy.model === "string" && legacy.model
         ? legacy.model
@@ -65,7 +74,22 @@ export async function POST(request: Request, context: Context) {
       : typeof legacy.instruction === "string" && legacy.instruction
         ? legacy.instruction
         : agent.rows[0].instructions;
-    const snapshot = { agent: { ...agent.rows[0], modelId: effectiveModel, instructions: effectiveInstructions }, graph };
+    const releases: Record<string, unknown> = {};
+    async function freeze(id: string, ancestors: string[]) {
+      if (ancestors.includes(id) || ancestors.length >= 4) throw new Error("Circular agent connection.");
+      if (releases[id]) return;
+      if (Object.keys(releases).length >= 30) throw new Error("Too many release dependencies.");
+      const row = (await client.query(`SELECT a.id,a.name,a.purpose,a.model_id AS "modelId",a.instructions,w.graph FROM agents a JOIN agent_workflows w ON w.user_id=a.user_id AND w.agent_id=a.id WHERE a.user_id=$1 AND a.id=$2 AND a.deleted_at IS NULL`, [session!.user.id,id])).rows[0];
+      if (!row) throw new Error("A connected agent is unavailable.");
+      const frozenGraph = withoutSecrets(row.graph) as WorkflowGraph;
+      if (isActualAgent(frozenGraph)) validateAgentFlow(frozenGraph);
+      else if (frozenGraph.nodes.some(n => ["ApiNode","IfElseNode","WhileNode","UserApprovalNode"].includes(n.type || ""))) throw new Error("Use connected Tools and Agents before publishing this legacy flow.");
+      releases[id] = { agent: { id: row.id, name: row.name, purpose: row.purpose, modelId: row.modelId, instructions: row.instructions }, graph: frozenGraph };
+      for (const ref of agentReferences(frozenGraph).filter(n => n.data.referenceKind === "agent")) await freeze(String(ref.data.referenceId), [...ancestors,id]);
+    }
+    const studio = isActualAgent(graph as WorkflowGraph) || nodes.some(n => n.type === "ModelNode" || n.type === "ReferenceNode");
+    if (studio) await freeze(agentId, []);
+    const snapshot = { agent: { ...agent.rows[0], modelId: effectiveModel, instructions: effectiveInstructions }, graph, ...(studio ? { releases, requiresOwnerSession: true } : {}) };
     await client.query(`UPDATE published_agents SET active = false WHERE user_id = $1 AND agent_id = $2 AND active`, [session.user.id, agentId]);
     await client.query(
       `INSERT INTO published_agents (id, public_id, user_id, agent_id, version, active, snapshot)
@@ -82,6 +106,7 @@ export async function POST(request: Request, context: Context) {
 export async function DELETE(request: Request, context: Context) {
   const session = await getRequestSession(request);
   if (!session?.user) return Response.json({ error: "Sign in to unpublish this agent." }, { status: 401 });
+  try { requireSameOrigin(request); } catch { return Response.json({ error: "Invalid origin." }, { status: 403 }); }
   const { agentId } = await context.params;
   if (!UUID.test(agentId)) return Response.json({ error: "Agent not found." }, { status: 404 });
   try {

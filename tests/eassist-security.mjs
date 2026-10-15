@@ -10,26 +10,16 @@ import { resolve, dirname, extname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import ts from 'typescript';
 
-const root=resolve(dirname(fileURLToPath(import.meta.url)),'..');
-registerHooks({
-  resolve(specifier,context,next){
-    let candidate;
-    if(specifier.startsWith('@/'))candidate=resolve(root,specifier.slice(2));
-    else if(specifier.startsWith('.')&&context.parentURL?.endsWith('.ts'))candidate=resolve(dirname(fileURLToPath(context.parentURL)),specifier);
-    if(candidate){if(!extname(candidate)&&existsSync(`${candidate}.ts`))candidate+='.ts';if(existsSync(candidate))return {url:pathToFileURL(candidate).href,shortCircuit:true};}
-    return next(specifier,context);
-  },
-  load(url,context,next){
-    if(url.endsWith('.ts'))return {format:'module',source:ts.transpileModule(readFileSync(fileURLToPath(url),'utf8'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ESNext}}).outputText,shortCircuit:true};
-    return next(url,context);
-  },
-});
-const {db}=await import('../lib/db.ts');
-const {action}=await import('../lib/eassist/actions.ts');
-const {connection,snapshot}=await import('../lib/eassist/store.ts');
-const {defaultSecurity,securityPolicy}=await import('../lib/eassist/security.ts');
-const {remote,seal,unseal}=await import('../lib/eassist/transport.ts');
-const {ingestAlerts}=await import('../lib/eassist/sync.ts');
+import {load} from './helpers/load-ts.mjs';
+const {db}=load('lib/db.ts');
+const fixtureContext={sharedOperationsOwner:async user=>user,operationsActor:user=>user};
+const deps={'@/lib/db':{db},'./db':{db},'./organization-context':fixtureContext,'@/lib/eassist/organization-context':fixtureContext,'@/lib/organization':{organizationOwner:async()=>null,organizationEvent:async()=>{}}};
+
+const {action}=load('lib/eassist/actions.ts',deps);
+const {connection,snapshot}=load('lib/eassist/store.ts',deps);
+const {defaultSecurity,securityPolicy}=load('lib/eassist/security.ts',deps);
+const {remote,seal,unseal}=load('lib/eassist/transport.ts',deps);
+const {ingestAlerts}=load('lib/eassist/sync.ts',deps);
 const users=[`eassist-security-${randomUUID()}`,`eassist-security-${randomUUID()}`];
 const tasks=new Map();let launches=0,sourceRequests=0;
 const server=createServer(async(req,res)=>{
@@ -58,6 +48,7 @@ async function authorize(connectionId,id='7',user=users[0]){return (await action
 function run(connectionId,approvalId,id='7'){return {action:'task.run',connectionId,id,approvalId,requestKey:randomUUID()};}
 try{
   for(const id of users)await db.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,false,now(),now())',[id,'Security integration test',`${id}@example.invalid`]);
+ for(const id of users)await db.query("UPDATE workspace_members SET role='admin' WHERE user_id=$1",[id]);
   check((await securityPolicy(users[0])).require_https,'HTTPS defaults on');
   check(!(await securityPolicy(users[0])).allow_deletes,'Deletion defaults off');
   await rejects(()=>action(users[0],{action:'security.save',policy:{...defaultSecurity,max_concurrent:0}}),400);
@@ -130,11 +121,12 @@ try{
   const ac=await connection(users[0],alerts.id);
   const alert={fingerprint:'fixture-alert',labels:{alertname:'Fixture signal'},status:'firing',startsAt:'2026-10-01T00:00:00Z'};
   await ingestAlerts(ac,[alert,alert]);
-  check((await snapshot(users[0])).records.filter(r=>r.kind==='alerts').length===1,'Alert ingestion deduplicates');
+  check((await snapshot(users[0])).records.filter(r=>r.kind==='alerts'&&r.connection_id===alerts.id).length===1,'Alert ingestion deduplicates');
   await ingestAlerts(ac,[{...alert,status:'resolved'}]);await ingestAlerts(ac,[alert]);
-  check((await snapshot(users[0])).records.find(r=>r.kind==='alerts').data.state==='resolved','Delayed active event cannot undo resolved occurrence');
-  check((await snapshot(users[1])).records.length===0,'Records are isolated across accounts');
-  check((await snapshot(users[0])).activity.some(a=>a.action==='Security configuration updated'),'Policy changes are audited');
+  check((await snapshot(users[0])).records.find(r=>r.kind==='alerts'&&r.connection_id===alerts.id).data.state==='resolved','Delayed active event cannot undo resolved occurrence');
+  await rejects(()=>connection(users[1],alerts.id),404);
+  check((await snapshot(users[1])).records.some(r=>r.connection_id===alerts.id),'Admins can see shared organization alerts without owning connection credentials');
+  check((await snapshot(users[0])).activity.some(a=>a.action.startsWith('Security configuration updated')),'Policy changes are audited');
   await rejects(()=>action(users[1],{action:'connection.delete',connectionId:saved.id,confirmed:true}),404);
   await rejects(()=>action(users[0],{action:'connection.delete',connectionId:saved.id}),400);
   check((await snapshot(users[0])).connections.some(row=>row.id===saved.id),'Deletion requires explicit confirmation');

@@ -13,7 +13,7 @@
 .pace button,
 .pace a,
 .pace input,
-.pace select,
+.pace .themed-select,
 .pace textarea {
   font: inherit;
 }
@@ -27,7 +27,7 @@
 .pace button:focus-visible,
 .pace a:focus-visible,
 .pace input:focus-visible,
-.pace select:focus-visible,
+.pace .themed-select:focus-visible,
 .pace textarea:focus-visible {
   outline: 3px solid #b7adff;
   outline-offset: 2px;
@@ -202,6 +202,26 @@
   border-color: var(--accent);
   color: #fff;
 }
+.pace-btn > svg {
+  flex-shrink: 0;
+  margin: 0;
+  color: currentColor;
+}
+.pace-btn.project-create {
+  min-height: 42px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+.pace-empty > .pace-btn.project-create {
+  margin-top: 18px;
+}
+.pace-btn.project-add {
+  width: 42px;
+  height: 42px;
+  padding: 0;
+}
 .pace-btn.danger {
   color: #e34268;
 }
@@ -218,6 +238,11 @@
   background: #fff;
   padding: 24px;
   box-shadow: 0 3px 10px #15254403;
+}
+.pace-access-panels {
+  display: grid;
+  gap: 24px;
+  min-width: 0;
 }
 .pace-safety-explainer {
   margin: 16px 0 8px;
@@ -282,7 +307,7 @@
   padding: 70px 20px;
   color: #98a4b7;
 }
-.pace-empty svg {
+.pace-empty > svg {
   margin: 0 auto 16px;
   color: #9d92ee;
 }
@@ -312,7 +337,7 @@
 }
 .pace input:not([type="checkbox"]),
 .pace textarea,
-.pace select {
+.pace .themed-select {
   border: 1px solid var(--line);
   border-radius: 9px;
   padding: 10px 12px;
@@ -439,6 +464,36 @@
   font-size: 14px;
   color: #405572;
   overflow-wrap: anywhere;
+}
+.pace-answer > .pace-answer-content {
+  margin-top: 14px;
+}
+.pace-ai-output-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 24px;
+  color: #7963db;
+}
+.pace-ai-output-label span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .08em;
+  white-space: nowrap;
+}
+.pace-ai-output-label svg {
+  flex-shrink: 0;
+  transform-origin: center;
+}
+.pace-ai-output-label.is-generating svg {
+  animation: pace-ai-star 2.8s ease-in-out infinite;
+}
+@keyframes pace-ai-star {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: .8; }
+  50% { transform: scale(1.12) rotate(10deg); opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pace-ai-output-label.is-generating svg { animation: none; }
 }
 .pace-answer-content p {
   color: inherit;
@@ -766,3 +821,242 @@
     display: block;
   }
 }
+
+/* Readiness explanations need to stay readable rather than truncate like trace cells. */
+.pace-readiness-table {
+  white-space: normal;
+  table-layout: fixed;
+}
+.pace-readiness-table th:first-child {
+  width: 25%;
+}
+.pace-readiness-table th:nth-child(2) {
+  width: 18%;
+}
+.pace-readiness-table td {
+  max-width: none;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+}
+@media (max-width: 720px) {
+  .pace-readiness-table {
+    min-width: 580px;
+  }
+}
+
+/* A viewport-sized chat shell: only the conversation scrolls; the editor stays put. */
+.pace-chat-page {
+  height: 100dvh;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pace-chat-page .pace-top {
+  flex: 0 0 76px;
+}
+.pace-chat-page .pace-layout {
+  flex: 1;
+  min-height: 0;
+}
+.pace-chat-page .pace-main {
+  height: 100%;
+  min-height: 0;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 20px 30px 12px;
+}
+.pace-chat-page .pace-heading,
+.pace-chat-page .pace-toolbar {
+  flex-shrink: 0;
+}
+.pace-chat-page .pace-heading {
+  margin-bottom: 16px;
+}
+.pace-chat-page .pace-toolbar {
+  margin-bottom: 12px;
+}
+.pace-chat-page .pace-chat {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  gap: 10px;
+}
+.pace-chat-feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 6px 10px 0;
+  scrollbar-gutter: stable;
+}
+.pace-chat-feed .pace-chat-welcome {
+  min-height: 100%;
+  padding: 8px 12px;
+}
+.pace-chat-feed .pace-chat-welcome .spark {
+  padding: 10px;
+  border-radius: 20px;
+  margin-bottom: 8px;
+}
+.pace-chat-feed .pace-chat-welcome .spark svg {
+  width: 36px;
+  height: 36px;
+}
+.pace-chat-feed .pace-chat-welcome h2 {
+  font-size: clamp(24px, 3.5dvh, 30px);
+  margin-top: 10px;
+}
+.pace-chat-feed .pace-chat-welcome p {
+  margin: 6px 0;
+}
+.pace-chat-feed .pace-suggestions {
+  margin: 10px auto;
+  gap: 12px;
+}
+.pace-chat-feed .pace-suggestions button {
+  padding: 12px 14px;
+  line-height: 1.5;
+}
+.pace-chat-feed .pace-suggestions button svg {
+  margin-top: 10px;
+}
+.pace-composer-dock {
+  flex-shrink: 0;
+}
+.pace-chat-page .pace-composer {
+  position: static;
+  margin: 0;
+}
+.pace-composer-tools {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+  min-height: 32px;
+  color: #8c98ac;
+  font-size: 11px;
+}
+.pace-composer-tools button {
+  border: 0;
+  background: transparent;
+  color: #708097;
+  border-radius: 7px;
+  padding: 5px 9px;
+}
+.pace-composer-tools button[aria-pressed="true"] {
+  color: var(--accent);
+  background: #eeebff;
+}
+.pace-chat-page .pace-composer textarea,
+.pace-input-preview {
+  flex: 1;
+  height: 90px;
+  min-height: 90px;
+  max-height: 90px;
+  overflow-y: auto;
+}
+.pace-input-preview {
+  padding: 8px 12px;
+  min-width: 0;
+}
+.pace-composer-dock > .pace-muted {
+  margin-top: 8px;
+  min-height: 18px;
+}
+.pace-user-message {
+  white-space: normal;
+}
+.pace-answer-content table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.pace-answer-content th,
+.pace-answer-content td {
+  border: 1px solid var(--line);
+  padding: 8px 12px;
+  text-align: left;
+}
+.pace-answer-content th {
+  background: #f8f9fc;
+}
+.pace-answer-content blockquote {
+  border-left: 3px solid #b7adff;
+  padding-left: 16px;
+  margin-left: 0;
+}
+.pace-answer-content :not(pre) > code {
+  background: #f0eefb;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+@media (max-width: 720px) {
+  .pace-chat-page .pace-layout {
+    display: flex;
+  }
+  .pace-chat-page .pace-main {
+    padding: 12px 16px 10px;
+  }
+  .pace-chat-page .pace-heading {
+    margin-bottom: 10px;
+    gap: 8px;
+  }
+  .pace-chat-page .pace-heading p,
+  .pace-composer-tools > span {
+    display: none;
+  }
+  .pace-chat-page .pace-toolbar {
+    margin-bottom: 8px;
+  }
+}
+
+/* Live Markdown composer and selection tools use the workspace palette. */
+.pace-rich-editor { flex: 1; min-width: 0; }
+.pace-rich-input { height: 90px; max-height: 90px; overflow-y: auto; outline: none; padding: 8px 4px; color: #17345c; font-size: 15px; line-height: 1.65; }
+.pace-chat-page .pace-rich-input { height: clamp(56px, 8dvh, 80px); max-height: clamp(56px, 8dvh, 80px); }
+@media (max-height: 740px) and (min-width: 721px) {
+  .pace-chat-page .pace-main { padding-top: 14px; }
+  .pace-chat-page .pace-heading { margin-bottom: 12px; }
+  .pace-chat-feed .pace-chat-welcome .spark { padding: 8px; }
+  .pace-chat-feed .pace-chat-welcome .spark svg { width: 28px; height: 28px; }
+  .pace-chat-feed .pace-chat-welcome > .pace-muted { font-size: 11px; }
+}
+.pace-rich-input p { margin: 0 0 8px; }
+.pace-rich-input p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; color: #8a99b2; height: 0; pointer-events: none; }
+.pace-selection-toolbar { position: relative; display: flex; align-items: center; gap: 2px; padding: 4px; border: 1px solid #dedbf5; border-radius: 12px; background: #fff; color: #223c62; box-shadow: 0 8px 28px #25326224; z-index: 100; }
+.pace-selection-toolbar button { display: flex; align-items: center; justify-content: center; gap: 7px; height: 32px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: inherit; cursor: pointer; font-size: 14px; }
+.pace-selection-toolbar button:hover, .pace-selection-toolbar button[aria-pressed="true"], .pace-selection-toolbar button[aria-expanded="true"] { background: #efecff; color: #5437ed; }
+.pace-selection-toolbar .pace-text-style { background: #f6f5fc; }
+.pace-style-menu, .pace-link-menu { position: absolute; bottom: calc(100% + 8px); right: 0; width: 250px; padding: 8px; background: #fff; border: 1px solid #dedbf5; border-radius: 20px; box-shadow: 0 8px 28px #25326224; }
+.pace-style-menu button { justify-content: space-between; width: 100%; height: 36px; padding: 0 8px; text-align: left; }
+.pace-style-menu button[aria-checked="true"] { color: #5437ed; }
+.pace-link-menu { display: flex; gap: 6px; width: 310px; border-radius: 12px; }
+.pace-link-menu input { width: 210px; min-width: 0; padding: 8px; border: 1px solid #dedbf5; border-radius: 8px; outline-color: #7155ef; }
+.pace-rich-input table { border-collapse: collapse; width: 100%; }
+.pace-rich-input td, .pace-rich-input th { border: 1px solid #dedbf5; padding: 5px 8px; }
+
+.pace-lifecycle-actions{margin-top:22px;gap:12px;flex-wrap:wrap}
+.pace .pace-lifecycle-link{margin-top:22px}
+
+.pace-project-trigger { min-width:180px; max-width:320px; }
+.pace-project-trigger > span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pace-project-popup { min-width:max(var(--anchor-width),260px); }
+.pace-project-label { margin:0; padding:8px 12px; color:#8996aa; font-size:12px; font-weight:500; }
+.pace-project-list { max-height:320px; overflow-y:auto; scrollbar-width:thin; }
+.pace-project-option { display:flex; align-items:center; gap:4px; border-radius:9px; padding:3px; }
+.pace-project-option[data-selected] { background:#eee9ff; color:#5c45d8; }
+.pace-project-name { display:flex; flex:1; min-width:0; align-items:center; justify-content:space-between; gap:12px; border:0; border-radius:7px; background:transparent; padding:8px 9px; text-align:left; color:inherit; font-size:13px; cursor:pointer; }
+.pace-project-name > span { overflow-wrap:anywhere; }
+.pace-project-delete { display:flex; flex-shrink:0; align-items:center; justify-content:center; width:32px; height:32px; border:0; border-radius:7px; background:transparent; color:#8d7e94; cursor:pointer; }
+.pace-project-name:hover { background:#f4f1ff; }
+.pace-project-delete:hover { background:#fff0f3; color:#c73d61; }
+.pace-project-name:focus-visible, .pace-project-delete:focus-visible { outline:2px solid #6351e9; outline-offset:1px; }

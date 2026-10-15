@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/.security-tools/
+/.security-runs/
 
 # next.js
 /.next/

@@ -1,7 +1,17 @@
+import { getRequestSession } from "@/lib/request-session";
+import { workspaceAccess } from "@/lib/workspace-access";
+import { permitted } from "@/lib/workspace-permissions";
+import { runStudioAgent, type Agent } from "@/lib/agent-studio-runtime";
+import type { WorkflowGraph } from "@/types/workflow";
+import { tokenDetails } from "@/lib/model-pricing";
+import { startPlatformRun, finishPlatformRun } from "@/lib/eassist/platform";
 import { randomUUID } from "node:crypto";
 import OpenAI from "openai";
 import { protectOpenAiRequest } from "@/config/Arcjet";
 import { db } from "@/lib/db";
+import { recordModelUsage } from "@/lib/model-usage";
+import { BRIEF_CHAT_STYLE, isStandaloneGreeting, recentChat } from "@/lib/chat-efficiency";
+import { recordLocalChat } from "@/lib/local-chat-usage";
 
 export const runtime = "nodejs";
 type Context = { params: Promise<{ publicId: string }> };
@@ -23,37 +33,46 @@ export async function POST(request: Request, context: Context) {
   if (!input || input.length > 12000) return Response.json({ error: "Enter a message of 1 to 12,000 characters." }, { status: 400, headers: CORS });
   const suppliedConversationId = typeof body.conversationId === "string" ? body.conversationId : request.headers.get("x-agent-conversation-id");
   if (suppliedConversationId && !UUID.test(suppliedConversationId)) return Response.json({ error: "The conversation ID is invalid. Start a new conversation." }, { status: 400, headers: CORS });
+  let executionId: string | undefined, ownerId: string | undefined;
   try {
-    const publication = await db.query<{ userId: string; agentId: string; snapshot: { agent: { name: string; instructions: string; modelId: string }; graph: unknown } }>(
+    const publication = await db.query<{ userId: string; agentId: string; snapshot: { agent: { name: string; instructions: string; modelId: string }; graph: unknown; requiresOwnerSession?: boolean; releases?: Record<string, { agent: Agent; graph: WorkflowGraph }> } }>(
       `SELECT user_id AS "userId", agent_id AS "agentId", snapshot FROM published_agents WHERE public_id = $1 AND active = true LIMIT 1`, [publicId]);
     const release = publication.rows[0];
     if (!release) return Response.json({ error: "This agent is not currently published." }, { status: 404, headers: CORS });
+    if (release.snapshot.requiresOwnerSession) {
+      const session = await getRequestSession(request);
+      if (session?.user.id !== release.userId || !permitted(await workspaceAccess(release.userId), "agent_studio")) return Response.json({ error: "Sign in as this agent’s owner to use its private connected data." }, { status: 403, headers: CORS });
+    }
+    ownerId = release.userId;
+    executionId = await startPlatformRun(ownerId,"published-agent",release.agentId);
     const config = release.snapshot.agent;
     const modelId = config.modelId || "gpt-4.1-mini";
     const conversationId = suppliedConversationId || randomUUID();
     const stored = await db.query<{ messages: { role: "user" | "assistant"; content: string }[] }>(
       `SELECT messages FROM published_conversations WHERE public_id=$1 AND conversation_id=$2 AND user_id=$3`, [publicId, conversationId, release.userId]);
     const history = stored.rows[0]?.messages ?? [];
-    const messages = [...history.slice(-38), { role: "user" as const, content: input }];
+    const messages = recentChat([...history.slice(-38), { role: "user" as const, content: input }]);
     const client = new OpenAI({ apiKey });
-    const result = await client.chat.completions.create({
+    const studio = release.snapshot.requiresOwnerSession ? await runStudioAgent(release.userId, release.agentId, messages, { releases: release.snapshot.releases, published: true }) : null;
+    const result = studio || isStandaloneGreeting(input) ? null : await client.chat.completions.create({
       model: modelId,
       messages: [
-        { role: "system", content: config.instructions || `You are ${config.name}, an AI assistant. Clearly say when operational data or connected tools are unavailable.` },
+        { role: "system", content: (config.instructions || `You are ${config.name}, an AI assistant. Clearly say when operational data or connected tools are unavailable.`) + "\n" + BRIEF_CHAT_STYLE },
         ...messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
       ],
     });
-    const reply = result.choices[0]?.message.content ?? "The agent completed without a text response.";
+    const reply = studio ? studio.reply : result ? result.choices[0]?.message.content ?? "The agent completed without a text response." : "Hello! How can I help you today?";
+    if (!result && !studio) await recordLocalChat(release.userId, "published-agent");
     await db.query(
       `INSERT INTO published_conversations (public_id,conversation_id,user_id,messages,updated_at) VALUES ($1,$2,$3,$4::jsonb,now())
        ON CONFLICT (public_id,conversation_id) DO UPDATE SET messages=EXCLUDED.messages,updated_at=now()`,
       [publicId, conversationId, release.userId, JSON.stringify([...messages, { role: "assistant", content: reply }].slice(-40))]);
-    const usage = result.usage;
-    if (usage) await db.query(
-      `INSERT INTO usage_events (id, user_id, source, model_id, input_tokens, output_tokens, total_tokens) VALUES ($1,$2,'published-agent',$3,$4,$5,$6)`,
-      [randomUUID(), release.userId, modelId, usage.prompt_tokens, usage.completion_tokens, usage.total_tokens]);
+    const usage = result?.usage;
+    if (usage) await recordModelUsage(release.userId,"published-agent",{modelId:result!.model,inputTokens:usage.prompt_tokens,outputTokens:usage.completion_tokens,totalTokens:usage.total_tokens,...tokenDetails(usage.prompt_tokens_details),serviceTier:result?.service_tier});
+    await finishPlatformRun(ownerId,executionId,true);
     return new Response(reply, { headers: { ...CORS, "Content-Type": "text/plain; charset=utf-8", "X-Agent-Conversation-Id": conversationId } });
-  } catch {
+  } catch (error) {
+    if (ownerId && executionId) await finishPlatformRun(ownerId,executionId,false,error).catch(()=>{});
     return Response.json({ error: "The published agent request could not be completed." }, { status: 502, headers: CORS });
   }
 }

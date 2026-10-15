@@ -1,0 +1,171 @@
+{
+  "checkedAt": "2026-10-15T07:56:51.823Z",
+  "scope": "Real verified fixture sign-ins; deployed role menus, snapshots, ticket allowance and denied endpoints. No staff submissions, vendor mutations or real-recipient mail.",
+  "results": [
+    {
+      "role": "user",
+      "path": "/api/playground/employee",
+      "status": 200
+    },
+    {
+      "role": "user",
+      "path": "/api/workspace/admin",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/workspace/organization",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/eassist",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/service-review-center/scans",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/service-review-center/vulnerabilities",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/workspace/requests?scope=team",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/service-review-center/records",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/epace",
+      "status": 403
+    },
+    {
+      "role": "user",
+      "path": "/api/workspace/tickets",
+      "status": 200
+    },
+    {
+      "role": "user",
+      "path": "/api/playground",
+      "status": 200
+    },
+    {
+      "role": "employee",
+      "path": "/api/playground/employee",
+      "status": 200
+    },
+    {
+      "role": "employee",
+      "path": "/api/workspace/admin",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/workspace/organization",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/eassist",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/service-review-center/scans",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/service-review-center/vulnerabilities",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/workspace/requests?scope=team",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/service-review-center/records",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/epace",
+      "status": 403
+    },
+    {
+      "role": "employee",
+      "path": "/api/workspace/tickets",
+      "status": 200
+    },
+    {
+      "role": "employee",
+      "path": "/api/playground",
+      "status": 200
+    },
+    {
+      "role": "manager",
+      "path": "/api/playground/employee",
+      "status": 200
+    },
+    {
+      "role": "manager",
+      "path": "/api/workspace/admin",
+      "status": 403
+    },
+    {
+      "role": "manager",
+      "path": "/api/workspace/organization",
+      "status": 403
+    },
+    {
+      "role": "manager",
+      "path": "/api/eassist",
+      "status": 403
+    },
+    {
+      "role": "manager",
+      "path": "/api/service-review-center/scans",
+      "status": 403
+    },
+    {
+      "role": "manager",
+      "path": "/api/service-review-center/vulnerabilities",
+      "status": 403
+    },
+    {
+      "role": "manager",
+      "path": "/api/workspace/requests?scope=team",
+      "status": 200
+    },
+    {
+      "role": "manager",
+      "path": "/api/service-review-center/records",
+      "status": 200
+    },
+    {
+      "role": "manager",
+      "path": "/api/epace",
+      "status": 200
+    },
+    {
+      "role": "manager",
+      "path": "/api/workspace/tickets",
+      "status": 200
+    },
+    {
+      "role": "manager",
+      "path": "/api/playground",
+      "status": 200
+    }
+  ]
+}

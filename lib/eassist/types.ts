@@ -3,7 +3,8 @@ export type Connection = { id: string; name: string; kind: 'alertmanager'|'servi
 export type RecordItem = { id: string; connection_id: string; kind: string; external_id: string; data: Json; observed_at: string; updated_at: string };
 export type ActivityItem = { id: string; action: string; target: string; detail: string; created_at: string };
 export type SecurityPolicy = {allow_runs:boolean;allow_writes:boolean;allow_deletes:boolean;require_confirmation:boolean;require_https:boolean;max_concurrent:number};
-export type Snapshot = { connections: Connection[]; records: RecordItem[]; activity: ActivityItem[]; operations: (Json & {id:string;connection_id:string;action:string;target:string;state:string})[]; security:SecurityPolicy; revision: string; limits: { records: number; activity: number } };
+export type AlertAccount={user_id:string;name:string;email:string;role:string;active:boolean;account_id:string|null};
+export type Snapshot = { alertAccounts?:AlertAccount[]; platformDelivery?: {state:string;count:number}[]; connections: Connection[]; records: RecordItem[]; activity: ActivityItem[]; operations: (Json & {id:string;connection_id:string;action:string;target:string;state:string})[]; security:SecurityPolicy; revision: string; limits: { records: number; activity: number } };
 export const textValue = (value: unknown): string => value == null ? '' : typeof value === 'object' ? JSON.stringify(value) : String(value);
 export function object(value: unknown): Json { return value && typeof value === 'object' && !Array.isArray(value) ? value as Json : {}; }
 export function array(value: unknown): Json[] { return Array.isArray(value) ? value.map(object) : []; }
