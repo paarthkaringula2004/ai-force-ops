@@ -1,4 +1,4 @@
-import "dotenv/config";
+import "./load-env.mjs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
@@ -22,7 +22,11 @@ try {
   `);
 
   const names = (await readdir(migrationsDirectory)).filter((name) => name.endsWith(".sql")).sort();
+  // Avoid a separate remote transaction per already-applied file on every restart.
+  // Pending migrations are still rechecked under the transaction lock below.
+  const completed = new Set((await pool.query('SELECT name FROM aiforce_schema_migrations')).rows.map(row => row.name));
   for (const name of names) {
+    if (completed.has(name)) continue;
     const client = await pool.connect();
     try {
       await client.query("BEGIN");

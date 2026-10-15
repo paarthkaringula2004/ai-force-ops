@@ -10,10 +10,13 @@
     "lint": "eslint",
     "db:migrate": "node scripts/migrate.mjs",
     "eassist:worker": "node scripts/eassist-worker.mjs",
-    "auth:migrate": "npx auth@latest migrate --yes",
+    "auth:migrate": "node scripts/auth-migrate.mjs",
     "security:worker": "node scripts/security-worker.mjs",
     "pricing:update": "node scripts/update-model-pricing.mjs",
-    "mail:worker": "node scripts/mail-worker.mjs"
+    "mail:worker": "node scripts/mail-worker.mjs",
+    "render:check": "node scripts/render-check.mjs",
+    "render:start": "node scripts/render-start.mjs",
+    "test:render": "node tests/render-deployment.mjs"
   },
   "dependencies": {
     "@arcjet/next": "^1.14.0",
@@ -65,5 +68,8 @@
     "exceljs": {
       "uuid": "^11.1.1"
     }
+  },
+  "engines": {
+    "node": ">=22 <25"
   }
 }

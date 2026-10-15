@@ -20,7 +20,7 @@ The root route (`/`) is the public product landing page. The workspace and its p
 
 ## Environment setup
 
-Use `.env.example` as the variable-name reference and put real values in the ignored `.env` file. `OPENAI_API_KEY` powers the server-side Playground, tool summaries, and published-agent endpoint; it is never included in browser integration code. `DATABASE_URL` connects to PostgreSQL; `BETTER_AUTH_SECRET` signs authentication sessions; `BETTER_AUTH_URL` must match the address used by the browser. Set `NEXT_PUBLIC_AIFORCE_URL` to the deployed app origin to generate integration snippets for a deployed app. For local development on Railway-hosted PostgreSQL, use its public proxy connection string. `ARCJET_KEY` enables the configured request protection. Restart `npm run dev` after changing environment values.
+The ignored `.env` is prepared for Render import; `.env.local` preserves laptop settings. See [Render deployment](docs/render-deployment.md) for the variable reference and launch commands. `OPENAI_API_KEY` powers the server-side Playground, tool summaries, and published-agent endpoint; it is never included in browser integration code. `DATABASE_URL` connects to PostgreSQL; `BETTER_AUTH_SECRET` signs authentication sessions; `BETTER_AUTH_URL` must match the address used by the browser. Set `NEXT_PUBLIC_AIFORCE_URL` to the deployed app origin to generate integration snippets for a deployed app. For local development on Railway-hosted PostgreSQL, use its public proxy connection string. `ARCJET_KEY` enables the configured request protection. Restart `npm run dev` after changing environment values.
 
 Do not commit `.env` or share secret key values.
 

@@ -1,5 +1,5 @@
-import 'dotenv/config';
-const secret=process.env.MAIL_WORKER_TOKEN,origin=process.env.BETTER_AUTH_URL||'http://localhost:3000';
+import './load-env.mjs';
+const secret=process.env.MAIL_WORKER_TOKEN,origin=process.env.MAIL_WORKER_APP_URL||process.env.BETTER_AUTH_URL||'http://localhost:3000';
 if(!secret||secret.length<32)throw new Error('Configure MAIL_WORKER_TOKEN before starting the mail worker.');
 let stopped=false;process.on('SIGINT',()=>{stopped=true;});process.on('SIGTERM',()=>{stopped=true;});
 console.log('Transactional mail worker started.');

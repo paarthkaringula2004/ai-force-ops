@@ -1,0 +1,31 @@
+# Import the PRIVATE .env into the service after creation. No secrets belong here.
+# This blueprint belongs next to package.json; select this path when using a monorepo.
+services:
+  - type: web
+    name: ai-force-ops
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm run render:start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        sync: false
+      - key: BETTER_AUTH_SECRET
+        sync: false
+      - key: BETTER_AUTH_URL
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: EASSIST_WORKER_TOKEN
+        sync: false
+      - key: MAIL_WORKER_TOKEN
+        sync: false
+      - key: RENDER_RUN_MIGRATIONS
+        value: "true"
+      - key: RENDER_RUN_WORKERS
+        value: "true"
+      - key: RENDER_RUN_SECURITY_WORKER
+        value: "false"

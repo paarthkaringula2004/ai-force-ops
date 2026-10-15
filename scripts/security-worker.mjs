@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.mjs';
 import {tools,scanProject} from './security-scanner.mjs';
 const token=process.env.SECURITY_SCAN_WORKER_TOKEN;
 const origin=process.env.SECURITY_SCAN_APP_URL||process.env.BETTER_AUTH_URL;

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import './load-env.mjs';
 const token=process.env.EASSIST_WORKER_TOKEN;
 if(!token||token.length<32)throw new Error('Set EASSIST_WORKER_TOKEN to a random secret of at least 32 characters.');
 const origin=process.env.EASSIST_APP_URL||process.env.BETTER_AUTH_URL;
