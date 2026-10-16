@@ -2,7 +2,7 @@ import {adminCapabilities} from './admin-playground-guide';
 import {organizationDocuments,documentFields} from './organization-documents';
 
 export type AdminIntent = {
- mode:'capabilities'|'guide'|'document'|'email'|'role'|'department'|'request'|'email_status'|'continue'|'confirm'|'cancel'|'edit'|'profile'|'organization'|'my_requests'|'chat'|'clarify';
+ mode:'capabilities'|'guide'|'document'|'email'|'role'|'department'|'department_lookup'|'request'|'email_status'|'continue'|'confirm'|'cancel'|'edit'|'profile'|'organization'|'my_requests'|'chat'|'clarify';
  capability:string;documentType:string;fields:{key:string;value:string}[];
  loginRole:''|'user'|'employee'|'manager'|'admin';requestAction:''|'approve'|'reject'|'cancel'|'fulfil';
  requestNumber:string;note:string;messageId:string;field:string;value:string;reply:string;
@@ -12,7 +12,7 @@ export type AdminConversationState = {
  documentType?:string;field?:string;ready:boolean;choices:string[];values:Record<string,string>;
 };
 export type AdminChatMessage={role:'user'|'assistant';content:string};
-const modes=['capabilities','guide','document','email','role','department','request','email_status','continue','confirm','cancel','edit','profile','organization','my_requests','chat','clarify'];
+const modes=['capabilities','guide','document','email','role','department','department_lookup','request','email_status','continue','confirm','cancel','edit','profile','organization','my_requests','chat','clarify'];
 const properties={
  mode:{type:'string',enum:modes},
  capability:{type:'string',enum:['',...adminCapabilities.map(c=>c.name),'My Customization']},
@@ -34,6 +34,7 @@ const definitions:[AdminIntent['mode'],string,string,Record<string,unknown>][]=[
  ['email','prepare_custom_email','START an ordinary custom email, not an organization document. The backend collects its exact message body. Missing details are allowed.',{fields:{...properties.fields,maxItems:3},value:{type:'string',description:'Subject only when explicitly supplied, otherwise empty.'}}],
  ['role','prepare_login_role_change','Prepare a change of website access role, NOT a job-position promotion. Full Admin access means loginRole admin; website manager means loginRole manager. Missing details and account eligibility are handled by backend, not by clarify_admin_request.',{fields:{...properties.fields,maxItems:3},loginRole:properties.loginRole}],
  ['department','prepare_new_department','Prepare creating a new company department. Extract its exact supplied name as fields [{key:department,value:the supplied name}], even when the name looks like a job title or acronym. Use fields [] only when no name was supplied. A reply to the current name question is answer_current_draft_field instead.',{fields:{type:'array',maxItems:1,items:{type:'object',properties:{key:{type:'string',enum:['department']},value:{type:'string'}},required:['key','value'],additionalProperties:false}}}],
+ ['department_lookup','read_company_departments','Read the current saved department catalog. Use for availability/existence questions such as Is there any DEPT named SDE? or list departments. This never creates or modifies a department.',{value:{type:'string',description:'Exact department name from the latest user message, or empty to list all departments.'}}],
  ['request','prepare_request_decision','Prepare approving, rejecting, cancelling or recording fulfilment of an employee REQ-number. Permission/status checks and final confirmation are performed by the backend.',{requestAction:properties.requestAction,requestNumber:properties.requestNumber,note:properties.note}],
  ['email_status','read_email_delivery','Read saved mail delivery status for an exact server-issued message UUID.',{messageId:properties.messageId}],
  ['profile','read_my_admin_profile','Read the signed-in Admin profile/name/email/Admin ID. Not a recipient or employee field answer.',{}],
@@ -64,7 +65,7 @@ Decision rules:
 1. A greeting/general question uses answer_admin_question. Asking what Admin can do overall uses show_admin_capabilities. A question about one feature, including whether it exists or how/where it works, uses show_admin_feature with its catalog name. For example 'Is there any mailing system?' uses show_admin_feature capability Offer emails, NOT the full capability list or prepare_custom_email. Other supported action requests use their preparation function.
 2. A request to write, prepare, give or send an organization letter starts prepare_organization_document even without any recipient details: choose documentType and fields []. Missing name/email/employment details are NOT task ambiguity. An employment offer is offer; a salary hike notification is salary_revision; PIP is performance_plan. Probation confirmation is a document, not an account operation.
 3. An ordinary custom email uses prepare_custom_email. Extract email in fields and an explicitly provided subject in value. The server asks for the exact body; do not invent/rewrite it.
-4. Website permission changes use prepare_login_role_change: full Admin access is loginRole admin; website manager is manager. Job positions and employment promotions are different. Department creation uses prepare_new_department; rename/delete uses show_admin_feature.
+4. Website permission changes use prepare_login_role_change: full Admin access is loginRole admin; website manager is manager. Job positions and employment promotions are different. Department availability/existence and list questions use read_company_departments, never show_admin_feature or prepare_new_department. For example "SDE is this dept available?" reads SDE. Department creation uses prepare_new_department; rename/delete uses show_admin_feature.
 5. Employee request acceptance means requestAction approve; turn down means reject. Use prepare_request_decision with the supplied REQ-number and exact reason/evidence in note. Approval/cancellation need no note: use empty string. The server checks eligibility. Never invent an ID, reason or evidence.
 6. Personal profile/ID questions use read_my_admin_profile. My own requests use read_my_personal_requests; organization/team requests use show_admin_feature capability Team requests. Saved document templates use show_admin_feature capability My Customization.
 7. If a saved draft asks a field, an answer about that field uses answer_current_draft_field, not a new document or profile query. If asked to change an already supplied field, use edit_saved_draft_field. Do not restart the same document during a follow-up. Preserve supplied wording; for multiline content leave value empty to use the original message. Normalize unambiguous dates to YYYY-MM-DD and option spelling only.

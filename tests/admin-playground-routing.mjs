@@ -6,15 +6,22 @@ const require=createRequire(import.meta.url);
 function load(path,deps={}){const m={exports:{}};new Function('require','module','exports',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText)(n=>n in deps?deps[n]:require(n),m,m.exports);return m.exports;}
 const guide=load('lib/admin-playground-guide.ts'),permissions=load('lib/workspace-permissions.ts');
 const member={role:'admin',active:true,permissions:[],user_id:'fixture'};
-let workflowCalls=0;
+let workflowCalls=0,decisionCalls=0,topupReading=null;
 let interpreted=null;
+let catalogReading=null;
 const modelCalls=[];
 let modelResponse={status:'completed',output_text:'An email preview lets you review the saved content before confirming delivery.',model:'fixture-model',usage:{input_tokens:50,output_tokens:20,total_tokens:70}};
 const workflow=async()=>{workflowCalls++;return null;};
+const departmentQueries=[];
+const lookup=load('lib/department-lookup.ts',{'./db':{db:{query:async(sql,args)=>{departmentQueries.push([sql,args]);return {rows:args&&args[0].toLowerCase()!=='sde'?[]:[{code:7,name:'SDE'}]};}}}});
 const {POST}=load('app/api/playground/route.ts',{
+ '@/lib/employee-services':load('lib/employee-services.ts'),
+ '@/lib/department-lookup':lookup,
+ '@/lib/playground-tool-runtime':{connectedPlaygroundReply:async()=>null},
+ '@/lib/playground-catalog':{catalogQuestion:()=>false,playgroundCatalogReply:async()=>catalogReading},
  '@/lib/playground-behavior':load('lib/playground-behavior.ts'),
  '@/lib/conversation-ai':{conversationResponse:async()=>({text:'Natural verified answer.',usage:{inputTokens:10,outputTokens:5,totalTokens:15}})},
- '@/lib/staff-request-decision-ai':{staffRequestDecisionAiReply:async()=>null},
+ '@/lib/staff-request-decision-ai':{staffRequestDecisionAiReply:async()=>{decisionCalls++;return null;}},
  '@/lib/staff-evidence-chat':{staffEvidenceChatReply:async()=>null},
  '@/lib/leave-ai-router':{employeeLeaveAiReply:async()=>null},
  '@/lib/employee-service-ai':{employeeServiceAiReply:async()=>null},
@@ -25,11 +32,11 @@ const {POST}=load('app/api/playground/route.ts',{
  '@/lib/playground-response':load('lib/playground-response.ts',{'./organization-security':{OrganizationPolicyError:class extends Error{}}}),'@/lib/model-usage':{recordModelUsage:async()=>{}},'@/config/Arcjet':{protectOpenAiRequest:async()=>null},
  '@/lib/request-session':{getRequestSession:async()=>({user:{id:'fixture',name:'Fixture'}})},'@/lib/db':{db:{query:async()=>{throw new Error('No guide may mutate the database');}}},
  '@/lib/workspace-access':{workspaceAccess:async()=>member},'@/lib/workspace-permissions':permissions,
- '@/lib/employee-playground':{employeeReply:async()=>null},'@/lib/workspace-chat':{workspaceChatReply:workflow},
+ '@/lib/employee-playground':{employeeReply:async()=>topupReading},'@/lib/workspace-chat':{workspaceChatReply:workflow},
  '@/lib/workspace-catalog-chat':{workspaceCatalogChatReply:workflow},'@/lib/workspace-mail-chat':{workspaceMailChatReply:workflow},
  '@/lib/workspace-offer-chat':{workspaceOfferChatReply:workflow},
  '@/lib/workspace-document-chat':{workspaceDocumentChatReply:workflow},
- '@/lib/admin-playground-router':{adminNaturalLanguageReply:async()=>interpreted},
+ '@/lib/admin-playground-router':{adminNaturalLanguageReply:async()=>interpreted,readAdminConversationState:async()=>null},
  '@/lib/admin-playground-guide':guide,'@/lib/workspace-request-chat':{workspaceRequestChatReply:workflow},
  '@/lib/service-review/ingestion':{requireSameOrigin:()=>{}},'@/lib/project-context':{playgroundInstructions:async text=>text},
  '@/lib/chat-efficiency':{recentChat:m=>m,isStandaloneGreeting:text=>/^(?:hi|hello)[!.]*$/i.test(text)},'@/lib/local-chat-usage':{recordLocalChat:async()=>{}},'@/lib/user-playground':{},
@@ -48,6 +55,26 @@ for(const prompt of ['Just tell me what a Admin Can do in form of Points\n1.\n2.
  assert.equal(workflowCalls,before,'Capability questions must not be consumed by a pending workflow');
  assert.equal(data.usage.totalTokens,0);
 }
+// Catalog reads are available to every active role, before any draft or AI router.
+for(const role of ['user','employee','manager','admin']){
+ member.role=role;
+ for(const prompt of ["Is there's any DEPT named SDE?",'"SDE" is this dept available ?', 'Does department SDE exist?', 'Do we have SDE department?', 'Is there a SDE department?', 'Can you check if SDE department exists?', 'Is there any dept named SDE in our organization?', 'List departments']){
+  const before=workflowCalls;
+  const response=await POST(new Request('http://localhost/api/playground',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'assistant',content:'What is the exact name of the new department?'},{role:'user',content:prompt}]})}));
+  assert.equal(response.status,200,role+': '+prompt);
+  const data=await response.json();assert.match(data.reply,/SDE/);assert.match(data.reply,/Department ID:? 7/);assert.doesNotMatch(data.reply,/Review new department|Department creation/);
+  assert.equal(workflowCalls,before,'Lookup cannot enter a mutation workflow');
+  assert.equal(data.usage.totalTokens,0);
+  if(role!=='admin')assert.deepEqual(data.choices,['List departments']);
+ }
+ const missing=await POST(new Request('http://localhost/api/playground',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:'Is department Missing available?'}]})}));
+ assert.match((await missing.json()).reply,/No department named \*\*Missing\*\* was found/);
+}
+member.role='admin';
+assert.ok(departmentQueries.every(([sql])=>sql.startsWith('SELECT code,name FROM staff_departments')));
+assert.equal(await lookup.readDepartmentLookup({...member,active:false},'SDE'),null);
+for(const prompt of ['Create department SDE','Delete department SDE','Rename department SDE','SDE'])assert.equal(lookup.departmentLookupQuestion(prompt),null);
+console.log('PASS: all four roles read live department matches, missing names and lists; no writes, model calls or draft interception.');
 console.log('PASS: real Playground POST dispatch returns all 66 Admin topic responses without a model, database writes or draft-field interception. Existing workflow adapters remain ahead of generic guidance for action commands.');
 assert.equal(modelCalls.length,0,'Exact guides do not invoke the answer model');
 const post=()=>POST(new Request('http://localhost/api/playground',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'fixture-model',instructions:'Explain in one sentence.',messages:[{role:'assistant',content:'Please enter the recipient name for your pending offer.'},{role:'user',content:'What does an email preview mean?'}]})}));
@@ -84,3 +111,25 @@ try {
  const grounded=await post();const groundedData=await grounded.json();assert.equal(groundedData.reply,'Natural verified answer.');assert.deepEqual(groundedData.choices,['About me']);assert.equal(groundedData.usage.totalTokens,18);
  console.log('PASS: greeting preferences reach OpenAI with trusted profile/time context and bypass workflow dispatch.');
 }finally{if(previousKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=previousKey;}
+
+const catalogKey=process.env.OPENAI_API_KEY;
+delete process.env.OPENAI_API_KEY;
+try{
+ catalogReading={reply:'Verified catalog: Fresh Agent uses Fresh Tool.',choices:['List my agents','List my tools'],responseMode:'workspace'};
+ for(const role of ['admin','manager','employee','user']){
+  member.role=role;const before=workflowCalls;
+  const r=await POST(new Request('http://localhost/api/playground',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'user',content:'What does Fresh Agent do?'}]})}));
+  assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'private, no-store');assert.equal((await r.json()).reply,catalogReading.reply);assert.equal(workflowCalls,before);
+ }
+}finally{catalogReading=null;member.role='admin';if(catalogKey===undefined)delete process.env.OPENAI_API_KEY;else process.env.OPENAI_API_KEY=catalogKey;}
+console.log('PASS: live catalog reading reaches all four Playground roles ahead of guided workflows, including without a model key.');
+
+try{
+ topupReading={reply:'How many tickets would you like to request from Admin?',choices:[],responseMode:'employee'};
+ for(const role of ['manager','employee']){
+  member.role=role;const before=decisionCalls;
+  const response=await POST(new Request('http://localhost/api/playground',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'assistant',content:'How many people will attend?'},{role:'user',content:'I want to request Tickets topup from Admin'}]})}));
+  assert.equal(response.status,200);assert.equal((await response.json()).reply,topupReading.reply);assert.equal(decisionCalls,before,'explicit top-up must run before history-based decision inference');
+ }
+ console.log('PASS: exact Manager and Employee top-up message bypasses stale meeting history and AI routing in the actual Playground POST handler.');
+}finally{topupReading=null;member.role='admin';}

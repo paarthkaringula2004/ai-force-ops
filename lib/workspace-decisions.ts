@@ -18,7 +18,7 @@ export async function decideRequestInTransaction(client:PoolClient,actor:string,
  const m=(await client.query('SELECT * FROM workspace_members WHERE user_id=$1',[actor])).rows[0];
  const r=(await client.query('SELECT r.*,r.updated_at::text AS version,m.manager_id,m.role AS employee_role FROM employee_service_requests r JOIN workspace_members m ON m.user_id=r.user_id WHERE r.id=$1 FOR UPDATE OF r',[b.id])).rows[0];
  const owns=r?.user_id===actor;
- const canDecide=m?.active&&!owns&&(m.role==='admin'||(m.role==='manager'&&r?.manager_id===actor&&!(r.kind==='leave'&&r.employee_role==='manager')));
+ const canDecide=m?.active&&!owns&&(m.role==='admin'||(m.role==='manager'&&r.kind!=='ticket_topup'&&r?.manager_id===actor&&!(r.kind==='leave'&&r.employee_role==='manager')));
  const allowed=r&&m?.active&&(b.action==='cancel'?owns||m.role==='admin':b.action==='fulfil'?m.role==='admin'&&!owns:canDecide);
  if(!allowed)throw new RequestDecisionError('Request not found or action not permitted. Self-approval is not allowed.',403);
  const approvedLeave=r.kind==='leave'&&r.status==='approved';
@@ -57,5 +57,5 @@ export async function decideRequestInTransaction(client:PoolClient,actor:string,
  await client.query('UPDATE employee_service_requests SET status=$2,decided_by=$3,decision_note=$4,updated_at=now() WHERE id=$1',[b.id,status,actor,b.note.trim()]);
  await client.query('INSERT INTO workspace_audit(id,actor_id,target_id,request_id,action,details) VALUES($1,$2,$3,$4,$5,$6::jsonb)',[randomUUID(),actor,r.user_id,b.id,`request.${b.action}`,JSON.stringify({from:r.status,to:status,note:b.note.trim()})]);
  await queueLeaveEvent(client,b.id);
- return {status,notice:b.action==='fulfil'?'Manual fulfilment recorded from your verification note. No external system action was executed.':r.kind==='leave'?'Decision saved in AIForce.Ops. Configured leave notifications are queued for email delivery.':'Decision saved in AIForce.Ops.'};
+ return {status,notice:r.kind==='ticket_topup'&&b.action!=='fulfil'?'Ticket top-up decision saved. No tickets were allocated by this decision. Admin can allocate tickets using Top up tickets in Administration.':b.action==='fulfil'?'Manual fulfilment recorded from your verification note. No external system action was executed.':r.kind==='leave'?'Decision saved in AIForce.Ops. Configured leave notifications are queued for email delivery.':'Decision saved in AIForce.Ops.'};
 }

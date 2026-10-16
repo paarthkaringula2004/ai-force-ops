@@ -16,7 +16,7 @@ export function studioGraph(name: string, modelId = "gpt-4.1-mini", instructions
       { id: "main-model", source: "main", sourceHandle: "model", target: "model", targetHandle: "attachment" },
       { id: "main-memory", source: "main", sourceHandle: "memory", target: "memory", targetHandle: "attachment" },
       { id: "main-tools", source: "main", sourceHandle: "tools", target: "tools", targetHandle: "attachment" },
-      { id: "main-agents", source: "main", target: "agents" },
+      { id: "main-agents", source: "main", sourceHandle: "output", target: "agents", targetHandle: "input" },
     ],
   };
 }

@@ -16,43 +16,24 @@ import {
   type Connection,
   type EdgeChange,
   type NodeChange,
-  type NodeTypes,
 } from "@xyflow/react";
 import { useParams, useRouter } from "next/navigation";
 import { Check, Clipboard, LoaderCircle, Save, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type ReactNode } from "react";
 import { WorkflowContext, type AddWorkflowNode } from "@/context/WorkflowContext";
-import { normalizeWorkflowGraph } from "@/lib/workflow-graph";
+import { normalizeWorkflowGraph, edgesBeforeConnection } from "@/lib/workflow-graph";
 import type { AgentRecord } from "@/lib/agent-store";
 import type { WorkflowEdge, WorkflowGraph, WorkflowNode, WorkflowNodeData, WorkflowNodeKind } from "@/types/workflow";
 import AgentToolsPanel from "./_components/AgentToolsPanel";
 import Header from "./_components/Header";
 import SettingPanel from "./_components/SettingPanel";
-import StudioNode from "./_costumNodes/StudioNode";
 import StudioPicker from "./_components/StudioPicker";
 import { studioGraph } from "@/lib/agent-studio-graph";
 
-import AgentNode from "./_costumNodes/AgentNode";
-import ApiNode from "./_costumNodes/ApiNode";
-import EndNode from "./_costumNodes/EndNode";
-import IfElseNode from "./_costumNodes/IfElseNode";
-import StartNode from "./_costumNodes/StartNode";
-import { actualNodeTypes } from "./_costumNodes/ActualNodes";
+import { workflowNodeTypes } from "./_costumNodes/workflow-node-types";
 import { Outfit } from "next/font/google";
 const originalOutfit = Outfit({subsets:["latin"]});
-import UserApprovalNode from "./_costumNodes/UserApprovalNode";
-import WhileNode from "./_costumNodes/WhileNode";
 
-const nodeTypes: NodeTypes = {
-  ModelNode: StudioNode, MemoryNode: StudioNode, ToolsNode: StudioNode, AgentsNode: StudioNode, ReferenceNode: StudioNode,
-  StartNode,
-  AgentNode,
-  ApiNode,
-  EndNode,
-  IfElseNode,
-  WhileNode,
-  UserApprovalNode,
-};
 
 type PublishedSnapshot = {
   agent: { name?: string; purpose?: string; modelId?: string; instructions?: string };
@@ -259,7 +240,7 @@ function BuilderCanvas({ agent, onBack, onOpenToolLibrary }: { agent: AgentRecor
     if (loaded && nodes.length) window.requestAnimationFrame(() => void fitView({ padding: 0.22, duration: 280, maxZoom: 1.5 }));
   }, [fitView, loaded, nodes.length]);
 
-  const renderedNodeTypes = useMemo(() => actual ? {...nodeTypes,...actualNodeTypes} : nodeTypes, [actual]);
+  const renderedNodeTypes = useMemo(() => workflowNodeTypes(actual), [actual]);
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId) ?? null, [nodes, selectedNodeId]);
   const onNodesChange = useCallback((changes: NodeChange<WorkflowNode>[]) => {
     const protectedChanges = changes.filter((change) => !(change.type === "remove" && change.id === "start"));
@@ -267,7 +248,7 @@ function BuilderCanvas({ agent, onBack, onOpenToolLibrary }: { agent: AgentRecor
     setNodes((current) => normalizeWorkflowGraph(applyNodeChanges(protectedChanges, current), []).nodes);
   }, []);
   const onEdgesChange = useCallback((changes: EdgeChange<WorkflowEdge>[]) => { if (changes.some((change) => change.type !== "select")) setSaved(false); setEdges((current) => applyEdgeChanges(changes, current) as WorkflowEdge[]); }, []);
-  const onConnect = useCallback((connection: Connection) => { setSaved(false); setEdges((current) => addEdge({ ...connection, type: "default", style: { stroke: "#9ba3b1", strokeWidth: 1.5 }, label: connection.sourceHandle === "if" ? "If" : connection.sourceHandle === "else" ? "Else" : undefined }, current)); }, []);
+  const onConnect = useCallback((connection: Connection) => { setSaved(false); setEdges((current) => normalizeWorkflowGraph(nodes, addEdge({ ...connection, type: "default", style: { stroke: "#9ba3b1", strokeWidth: 1.5 }, label: connection.sourceHandle === "if" ? "If" : connection.sourceHandle === "else" ? "Else" : undefined }, edgesBeforeConnection(nodes,current,connection))).edges); }, [nodes]);
 
   const addNode = useCallback<AddWorkflowNode>((kind, point, overrides) => {
     if (locked) return;
@@ -295,7 +276,7 @@ function BuilderCanvas({ agent, onBack, onOpenToolLibrary }: { agent: AgentRecor
     const id = `reference-${crypto.randomUUID().slice(0, 8)}`;
     const count = nodes.filter(node => childIds.includes(node.id) && node.type === "ReferenceNode").length;
     setNodes(current => [...current, { id, type: "ReferenceNode", position: { x: owner.position.x + 260, y: owner.position.y + 110 + count * 100 }, data }]);
-    setEdges(current => [...current, { id: `${owner.id}-${id}`, source: owner.id, sourceHandle: "tools", target: id, targetHandle: "attachment", type: "default" }]);
+    setEdges(current => [...current, { id: `${owner.id}-${id}`, source: owner.id, sourceHandle: actual ? "output" : "tools", target: id, targetHandle: actual ? "input" : "attachment", type: "default" }]);
     setSaved(false);
     setSelectedNodeId(owner.id);
     return `Connected to ${owner.data.label}.`;
@@ -311,7 +292,7 @@ function BuilderCanvas({ agent, onBack, onOpenToolLibrary }: { agent: AgentRecor
     const count = childIds.length;
     const child: WorkflowNode = { id, type: "ReferenceNode", position: { x: hub.position.x + 320, y: hub.position.y - 130 + count * 110 }, data };
     setNodes(current => [...current, child]);
-    setEdges(current => [...current, { id: `${hub.id}-${id}`, source: hub.id, sourceHandle: "children", target: id, type: "default" }]);
+    setEdges(current => [...current, { id: `${hub.id}-${id}`, source: hub.id, sourceHandle: actual ? "output" : "children", target: id, ...(actual ? {targetHandle:"input"} : {}), type: "default" }]);
     setSaved(false); setPicker(null); setSelectedNodeId(id);
   }
   const updateNode = useCallback((id: string, updates: Partial<WorkflowNodeData>) => {
@@ -397,8 +378,10 @@ function BuilderCanvas({ agent, onBack, onOpenToolLibrary }: { agent: AgentRecor
   async function publishAgent() {
     setPublishing(true);
     try {
-      await persist({ nodes, edges });
-      setSaved(true);
+      if (!await saveNow()) {
+        setSaveError("Could not save the latest changes. Review the workflow and try publishing again.");
+        return;
+      }
       const response = await fetch(`/api/agents/${encodeURIComponent(agent.id)}/publish`, { method: "POST" });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Could not publish this agent.");
@@ -420,7 +403,7 @@ function BuilderCanvas({ agent, onBack, onOpenToolLibrary }: { agent: AgentRecor
   }
 
   return <WorkflowContext.Provider value={{ addNode, addAgentTool, openToolLibrary: onOpenToolLibrary, openAttachments: (id, kind) => { if (!locked) { setSelectedNodeId(null); setPicker({ id, kind }); } } }}><div className={`flex h-dvh min-h-[520px] flex-col overflow-hidden bg-white text-[#172033] ${actual ? `actual-agent-canvas ${originalOutfit.className}` : ""}`}>
-    <Header name={agent.name} onBack={onBack} onCode={() => { setCodeTab("code"); setImportText(""); setImportError(""); setCodeOpen(true); }} onLaunch={() => void openPreview()} onSave={() => void saveNow()} locked={locked} onLock={() => { setLocked(value => !value); setSelectedNodeId(null); setPicker(null); }} saved={saved} loading={!loaded} autosave={autosave} onAutosaveChange={setAutosavePreference} />
+    <Header name={agent.name} onBack={onBack} onCode={() => { setCodeTab("code"); setImportText(""); setImportError(""); setCodeOpen(true); }} onLaunch={() => void openPreview()} onPublish={() => { setSaveError(""); setPublishOpen(true); }} onSave={() => void saveNow()} locked={locked} onLock={() => { setLocked(value => !value); setSelectedNodeId(null); setPicker(null); }} saved={saved} loading={!loaded} autosave={autosave} onAutosaveChange={setAutosavePreference} />
     <div ref={canvasRef} onDrop={onDrop} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = "move"; }} className="relative min-h-0 flex-1 bg-white">
       {!loaded ? saveError ? <div className="flex h-full flex-col items-center justify-center gap-3 px-5 text-center"><p role="alert" className="max-w-md text-sm leading-6 text-rose-700">{saveError}</p><button type="button" onClick={() => { setSaveError(""); setLoadAttempt((attempt) => attempt + 1); }} className="rounded-lg bg-[#6255e8] px-4 py-2.5 text-xs font-semibold text-white">Retry loading workflow</button></div> : <div className="flex h-full items-center justify-center text-sm text-[#7c8595]"><LoaderCircle className="mr-2 size-4 animate-spin" />Loading workflow from PostgreSQL…</div> : <>
         <ReactFlow<WorkflowNode, WorkflowEdge>

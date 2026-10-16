@@ -5,7 +5,7 @@ import ts from 'typescript';
 const require=createRequire(import.meta.url);
 function load(path,deps){const m={exports:{}};new Function('require','module','exports',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText)(n=>n in deps?deps[n]:require(n),m,m.exports);return m.exports;}
 let session=null,role='admin';const actors=[];
-const route=load('app/api/tools/knowledge/route.ts',{
+const deps={
  '@/lib/request-session':{getRequestSession:async()=>session},
  '@/lib/workspace-access':{workspaceAccess:async id=>{actors.push(id);return {role};}},
  '@/lib/workspace-permissions':{permitted:(m)=>m.role==='admin'},
@@ -18,7 +18,9 @@ const route=load('app/api/tools/knowledge/route.ts',{
   if(sql.includes('FROM eassist_connections'))return {rows:[]};
   throw Error('Unexpected query');
  }}}
-});
+};
+const knowledge=load('lib/tool-knowledge.ts',deps);
+const route=load('app/api/tools/knowledge/route.ts',{...deps,'@/lib/tool-knowledge':knowledge});
 const request=new Request('http://localhost:3000/api/tools/knowledge');
 assert.equal((await route.GET(request)).status,401);
 session={user:{id:'owner'}};let response=await route.GET(request);assert.equal(response.headers.get('cache-control'),'no-store');let data=await response.json();

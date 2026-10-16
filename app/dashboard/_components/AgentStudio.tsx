@@ -10,6 +10,7 @@ import { Administration, WorkspaceRequests } from "./WorkspaceRoles";
 import { permitted, requiredPermission, type WorkspaceAccess } from "@/lib/workspace-permissions";
 import AgentManager from "./AgentManager";
 import MeetingRooms from "./MeetingRooms";
+import {WorkspaceRequestNotifications} from "./RequestNotifications";
 import { WorkspaceMeetingNotifications } from "./MeetingInvitations";
 import MyCustomization from "./MyCustomization";
 import PlaygroundView from "./PlaygroundView";
@@ -209,6 +210,7 @@ export default function AgentStudio({ initialSection = "Playground" }: { initial
         </aside>
 
         <main className="relative flex min-w-0 flex-1 overflow-hidden bg-white">
+          {currentMember?.active && ["admin","manager"].includes(currentMember.role) && userId && <WorkspaceRequestNotifications key={userId} userId={userId}/>}
           {currentMember?.active && userId && <WorkspaceMeetingNotifications key={userId} userId={userId} />}
           {accessError ? <div role="alert" className="m-8 rounded-2xl border border-rose-100 bg-rose-50 p-5 text-sm text-rose-700"><p>{accessError}</p><button className="mt-3 rounded-xl border border-rose-200 bg-white px-4 py-2 font-semibold" onClick={() => { setAccessError(""); setAccessRetry(value => value + 1); }}>Try again</button></div> : !currentMember ? <p className="p-8 text-sm text-slate-500">Checking workspace access…</p> : !allowed(activeSection) ? <p className="p-8">Your role does not permit this workspace. Open Playground.</p> : activeSection === "My Customization" ? <MyCustomization /> : activeSection === "Administration" ? <Administration /> : (activeSection === "Team Requests" || activeSection === "My Requests") ? (currentMember ? <WorkspaceRequests member={currentMember} personal={activeSection === "My Requests"} /> : <p className="p-8">Checking permissions…</p>) : activeSection === "Meeting Rooms" ? <MeetingRooms /> : activeSection === "Agents" ? <AgentManager /> : activeSection === "Playground" ? <PlaygroundView configurationOpen={Boolean(currentMember && permitted(currentMember, "agent_studio") && configurationOpen)} /> : <div className="min-h-0 flex-1 overflow-y-auto"><WorkspaceSection section={activeSection} /></div>}
         </main>

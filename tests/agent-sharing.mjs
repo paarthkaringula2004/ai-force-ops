@@ -30,7 +30,7 @@ try {
   for (const [id, graph] of [[agentId, root], [childId, child]]) { await client.query("INSERT INTO agents(id,user_id,name,model_id,instructions) VALUES($1,$2,$3,'gpt-4.1-mini','Use evidence')", [id, owner, id === agentId ? 'Security Agent' : 'Security reports']); await client.query('INSERT INTO agent_workflows(user_id,agent_id,graph) VALUES($1,$2,$3)', [owner, id, JSON.stringify(graph)]); }
   await assert.rejects(() => sharing.saveAgentShare(people.user[0], agentId, ['user']), error => error.status === 403);
   await assert.rejects(() => sharing.saveAgentShare(another, agentId, ['user']), error => error.status === 404);
-  assert.throws(() => sharing.parseShareRoles(['admin']), /Choose/); assert.throws(() => sharing.parseShareRoles(['user', 'user']), /Choose/);
+  assert.deepEqual(sharing.parseShareRoles(['admin']), ['admin']); assert.throws(() => sharing.parseShareRoles(['owner']), /Choose/); assert.throws(() => sharing.parseShareRoles(['user', 'user']), /Choose/);
   const saved = await sharing.saveAgentShare(owner, agentId, ['manager', 'employee']); assert.equal(saved.shared, true); assert.ok(saved.shareId);
   for (const role of ['manager', 'employee']) for (const person of people[role]) { const clone = await sharing.loadSharedAgent(person, saved.shareId); assert.equal(clone.ownerId, owner); assert.equal(Object.keys(clone.snapshot.releases).length, 2); assert.equal((await sharing.listAgentShares(person)).shared[0].id, saved.shareId); assert.equal(JSON.stringify(clone.snapshot).includes('must-not-be-in-snapshot'), false); }
   for (const person of people.user) await assert.rejects(() => sharing.loadSharedAgent(person, saved.shareId), error => error.status === 403);
@@ -56,5 +56,24 @@ try {
   const otherShare=await sharing.saveAgentShare(another,agentId,['user']);assert.notEqual(otherShare.shareId,saved.shareId);assert.equal((await sharing.loadSharedAgent(people.user[1],saved.shareId)).ownerId,owner);assert.equal((await sharing.loadSharedAgent(people.user[1],otherShare.shareId)).ownerId,another);await sharing.saveAgentShare(another,agentId,[]);
   await sharing.saveAgentShare(owner, agentId, []); await assert.rejects(() => sharing.loadSharedAgent(people.user[1], saved.shareId), error => error.status === 403); assert.equal((await sharing.listAgentShares(people.user[1])).shared.length, 0);
   assert.equal((await route.POST(new Request('http://localhost/api/agents/shared', { method: 'POST', body: '{}' }), context)).status, 403);
-  console.log('PASS: all members of selected roles including accounts created after sharing, excluded roles, Admin-only ownership, frozen specialist clones, secret stripping, current-source execution context, disabled accounts/owners, deleted agents, role changes, revocation, safe preview metadata and rejected approvals. Real database fixtures rolled back; no provider calls.');
+  const managerOwner=people.manager[0],managerAgent=randomUUID();
+  await client.query("INSERT INTO agents(id,user_id,name,model_id) VALUES($1,$2,'Manager owned fixture','gpt-4.1-mini')",[managerAgent,managerOwner]);
+  await client.query('INSERT INTO agent_workflows(user_id,agent_id,graph) VALUES($1,$2,$3)',[managerOwner,managerAgent,JSON.stringify(graphs.studioGraph('Manager owned fixture'))]);
+  await assert.rejects(()=>sharing.saveAgentShare(managerOwner,agentId,['user'],[people.user[1]]),e=>e.status===404);
+  const managerShare=await sharing.saveAgentShare(managerOwner,managerAgent,['admin','employee','user'],[people.user[1]]);
+  const managerListing=await sharing.listAgentShares(managerOwner);
+  assert.equal(managerListing.shareMode,'recipients');assert.equal(managerListing.canShare,true);assert.ok(managerListing.own.some(s=>s.id===managerAgent));
+  for(const person of [another,people.employee[0],people.user[1]]){
+   assert.equal((await sharing.loadSharedAgent(person,managerShare.shareId)).ownerId,managerOwner);
+   assert.ok((await sharing.listAgentShares(person)).shared.some(s=>s.id===managerShare.shareId));
+  }
+  await assert.rejects(()=>sharing.loadSharedAgent(people.manager[1],managerShare.shareId),e=>e.status===403);
+  await client.query("UPDATE workspace_members SET role='employee' WHERE user_id=$1",[managerOwner]);
+  await assert.rejects(()=>sharing.loadSharedAgent(another,managerShare.shareId),e=>e.status===403);
+  await assert.rejects(()=>sharing.saveAgentShare(managerOwner,managerAgent,['admin']),e=>e.status===403);
+  await client.query("UPDATE workspace_members SET role='manager' WHERE user_id=$1",[managerOwner]);
+  await sharing.saveAgentShare(managerOwner,managerAgent,[]);
+  await assert.rejects(()=>sharing.loadSharedAgent(another,managerShare.shareId),e=>e.status===403);
+  console.log('PASS: Manager-owned sharing to Employee, Admin and User; own sharing controls enabled; foreign-agent resharing denied; unselected roles, owner demotion and revocation enforced.');
+  console.log('PASS: all members of selected roles including accounts created after sharing, excluded roles, Admin/Manager ownership, frozen specialist clones, secret stripping, current-source execution context, disabled accounts/owners, deleted agents, role changes, revocation, safe preview metadata and rejected approvals. Real database fixtures rolled back; no provider calls.');
 } finally { await client.query('ROLLBACK'); client.release(); await pool.end(); }

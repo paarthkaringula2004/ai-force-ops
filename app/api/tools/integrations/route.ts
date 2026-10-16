@@ -1,9 +1,11 @@
+import { providerById } from "@/lib/integrations/catalog";
+import { requireIntegrationAccess, requireIntegrationCreate, integrationShares, saveIntegrationShare, integrationShareOptions } from "@/lib/integrations/access";
 import { getRequestSession } from "@/lib/request-session";
 import { requireSameOrigin, IngestionError } from "@/lib/service-review/ingestion";
 import { boundedJson, InputError, unseal } from "@/lib/eassist/transport";
 import { listProviders, createProvider, archiveProvider } from "@/lib/integrations/registry";
 import { saveConnection } from "@/lib/integrations/store";
-import { approveIntegration, integrationCapabilities, prepareIntegration, requireIntegrationAdmin } from "@/lib/integrations/runtime";
+import { approveIntegration, integrationCapabilities, prepareIntegration } from "@/lib/integrations/runtime";
 import { db } from "@/lib/db";
 import { configureMonitor, monitorSnapshot } from "@/lib/integrations/monitor";
 
@@ -14,7 +16,7 @@ function failure(error:unknown) {const known=error instanceof InputError||error 
 export async function GET(request:Request) {
   const session=await getRequestSession(request);if(!session?.user)return reply({error:"Sign in first."},401);
   try {
-    await requireIntegrationAdmin(session.user.id);
+    const access=await requireIntegrationAccess(session.user.id);
     const privateRows=(await db.query("SELECT provider,config,enabled,revision,checked_at,check_state,check_message,updated_at,secret_cipher FROM integration_connections WHERE user_id=$1",[session.user.id])).rows;
     const rows=privateRows.map(row=>{const {secret_cipher,...metadata}=row;let credential_fields:string[]=[];try{const credentials=JSON.parse(unseal(secret_cipher));credential_fields=Object.keys(credentials).filter(k=>!!credentials[k]);}catch{credential_fields=[];}return {...metadata,has_secret:credential_fields.length>0,credential_fields};});
     const existing=(await db.query("SELECT id,name,kind FROM eassist_connections WHERE user_id=$1 AND enabled=true AND kind IN ('servicenow','semaphore') ORDER BY name",[session.user.id])).rows;
@@ -22,16 +24,18 @@ export async function GET(request:Request) {
     const monitors=(await db.query("SELECT provider,operation,enabled,interval_seconds,last_status,last_checked_at FROM integration_monitors WHERE user_id=$1",[session.user.id])).rows;
     const catalog=await listProviders(session.user.id),all=await listProviders(session.user.id,true);
     const removed=all.filter(p=>!catalog.some(v=>v.id===p.id)).map(p=>({id:p.id,name:p.name}));
-    return reply({catalog,connections:rows,existing,history,monitors,removed});
+    return reply({catalog,connections:rows.filter(r=>catalog.some(p=>p.id===r.provider)),existing,history,monitors,removed,canShare:access.admin||access.manager,canCreate:access.canCreate,canGrantCreation:access.admin,shareableProviders:catalog.map(p=>({provider:p.id,roles:integrationShareOptions(access,p.id)})).filter(p=>p.roles.length),deletableProviders:all.filter(p=>access.own.includes(p.id)||(access.admin&&providerById(p.id))).map(p=>p.id),shares:access.admin||access.manager?await integrationShares(session.user.id):[]});
   }catch(error){return failure(error);}
 }
 export async function POST(request:Request) {
   const session=await getRequestSession(request);if(!session?.user)return reply({error:"Sign in first."},401);
   try {
-    requireSameOrigin(request);await requireIntegrationAdmin(session.user.id);
-    const raw=await boundedJson(request);if(!raw||typeof raw!=="object")throw new InputError("Invalid request.");
+    requireSameOrigin(request);await requireIntegrationAccess(session.user.id);
+    const raw=await boundedJson(request);if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new InputError("Invalid request.");
     const b=raw as Record<string,unknown>,provider=String(b.provider||"");
-    if(b.action==="create_provider")return reply({provider:await createProvider(session.user.id,b)},201);
+    if(b.action==="share") {await saveIntegrationShare(session.user.id,provider,b.roles);return reply({saved:true});}
+    if(b.action==="create_provider") {await requireIntegrationCreate(session.user.id);return reply({provider:await createProvider(session.user.id,b)},201);}
+    if(b.action!=="approve")await requireIntegrationAccess(session.user.id,provider);
     if(b.action==="archive_provider"||b.action==="restore_provider") {await archiveProvider(session.user.id,provider,b.action==="restore_provider");return reply({saved:true});}
     if(b.action==="monitor") {await configureMonitor(session.user.id,provider,String(b.operation||""),b.inputs||{},Number(b.interval),b.enabled===true);return reply({saved:true});}
     if(b.action==="monitor_snapshot")return reply(await monitorSnapshot(session.user.id,provider));

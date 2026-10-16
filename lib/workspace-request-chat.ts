@@ -10,7 +10,7 @@ export async function workspaceRequestChatReply(user:string,input:string,access?
  const text=input.trim(),member=access||await workspaceAccess(user);
  if(/^(team requests|team approvals|my team)$/i.test(text)){
   if(!permitted(member,'team'))return answer('Team requests are available to Managers and Admins. You can track your own requests in My Requests.',['My requests']);
-  const rows=(await db.query(`SELECT r.request_number,r.kind,r.status,u.name FROM employee_service_requests r JOIN workspace_members m ON m.user_id=r.user_id JOIN "user" u ON u.id=r.user_id WHERE ${member.role==='admin'?'$1::text IS NOT NULL':'m.manager_id=$1 AND r.user_id<>$1'} ORDER BY r.created_at DESC LIMIT 20`,[user])).rows;
+  const rows=(await db.query(`SELECT r.request_number,r.kind,r.status,u.name FROM employee_service_requests r JOIN workspace_members m ON m.user_id=r.user_id JOIN "user" u ON u.id=r.user_id WHERE ${member.role==='admin'?'$1::text IS NOT NULL':"m.manager_id=$1 AND r.user_id<>$1 AND r.kind<>'ticket_topup'"} ORDER BY r.created_at DESC LIMIT 20`,[user])).rows;
   return answer(rows.length?`**${member.role==='admin'?'Workspace':'Team'} requests**\n\n| Request | Employee | Service | Status |\n|---|---|---|---|\n${rows.map(row=>`| ${row.request_number} | ${String(row.name).replaceAll('|','\\|').replaceAll('\n',' ')} | ${employeeServiceLabels[row.kind]||row.kind} | ${requestStatusLabel(row.status)} |`).join('\n')}\n\nTo review a decision, say **Approve REQ-…** or **Reject REQ-… because [reason]**. No changes are made until you confirm. [Open Team Requests](/dashboard/team-requests).`:'There are no requests in your team view. Assign reporting managers through Administration to route requests.',['Employee services',...(member.role==='admin'?['Assign role']:[])]);
  }
  const command=text.match(/^(approve|reject|cancel|fulfil)\s+(REQ-[A-Z0-9-]+)(?:\s+(?:because|with note)\s+(.+))?$/i);
@@ -28,6 +28,7 @@ export async function workspaceRequestChatReply(user:string,input:string,access?
   }else{
    const action=command![1].toLowerCase() as RequestDecision['action'],number=command![2].toUpperCase(),note=command![3]?.trim()||'';
    const item=(await client.query(`SELECT r.*,r.updated_at::text AS version,u.name,m.manager_id FROM employee_service_requests r JOIN workspace_members m ON m.user_id=r.user_id JOIN "user" u ON u.id=r.user_id WHERE upper(r.request_number)=$2 AND ${member.role==='admin'?'$1::text IS NOT NULL':member.role==='manager'?'(r.user_id=$1 OR m.manager_id=$1)':'r.user_id=$1'}`,[user,number])).rows[0];
+   if(item?.kind==='ticket_topup'&&action!=='cancel'&&member.role!=='admin')throw new RequestDecisionError('Ticket top-up requests require Admin review.',403);
    const owns=item?.user_id===user;
    if(!item||!member.active||(action==='cancel'?(!owns&&member.role!=='admin'):action==='fulfil'?(member.role!=='admin'||owns):(!permitted(member,'team')||owns)))throw new RequestDecisionError('Request not found or action not permitted. Self-approval is not allowed.',403);
    if(item.status!==(action==='fulfil'?'approved':'pending_approval'))throw new RequestDecisionError('This request is no longer eligible for that action.');

@@ -1,4 +1,4 @@
-import 'dotenv/config';
+import '../scripts/load-env.mjs';
 import assert from 'node:assert/strict';
 import {randomUUID} from 'node:crypto';
 import {readFileSync} from 'node:fs';
@@ -7,11 +7,12 @@ import ts from 'typescript';
 import pg from 'pg';
 const require=createRequire(import.meta.url);
 import {load} from './helpers/load-ts.mjs';
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL}),c=await pool.connect();
+const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,connectionTimeoutMillis:15000,statement_timeout:15000}),c=await pool.connect();
 const permissions=load('lib/workspace-permissions.ts'),catalog=load('lib/staff-catalog.ts',{'./workspace-permissions':permissions});
 // Keep all workflow commits inside this test's outer rollback transaction.
 const client={query:(sql,args)=>/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)?Promise.resolve({rows:[]}):c.query(sql,args),release(){}};
 const {workspaceCatalogChatReply:reply}=load('lib/workspace-catalog-chat.ts',{'./db':{db:{connect:async()=>client}},'./workspace-permissions':permissions,'./staff-catalog':catalog,'./department-name':load('lib/department-name.ts'),'./organization-security':{organizationWriteAllowed:async()=>{}}});
+const {readDepartmentLookup}=load('lib/department-lookup.ts',{'./db':{db:client}});
 try{
  await c.query('BEGIN');const id=randomUUID();
  await c.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',[id,'Catalog chat test',id+'@example.invalid']);
@@ -35,6 +36,11 @@ try{
  await reply(id,'Cancel department creation',admin);await reply(id,'Create department '+name,admin);
  const created=await reply(id,'conform',admin);assert.match(created.reply,/created successfully/);assert.match(created.reply,/Department ID/);
  assert.equal((await c.query('SELECT 1 FROM staff_departments WHERE name=$1',[name])).rowCount,1);
+ for(const role of ['user','employee','manager','admin']){
+  const found=await readDepartmentLookup({...admin,role},name);assert.match(found.reply,/Yes,/);assert.ok(found.reply.includes(name));
+  assert.match((await readDepartmentLookup({...admin,role},'Missing '+randomUUID())).reply,/was found/);
+  assert.ok((await readDepartmentLookup({...admin,role})).reply.includes(name));
+ }
  assert.match((await reply(id,preview.choices[0],admin)).reply,/expired or was replaced/);
  assert.match((await reply(id,'Create department '+name,admin)).reply,/already exists/);
  const second=await reply(id,'Create department Another '+randomUUID(),admin);

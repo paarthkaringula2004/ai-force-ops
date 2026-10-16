@@ -1,6 +1,6 @@
 import {emailOTP} from "better-auth/plugins";
 import {queueMail} from "@/lib/mail";
-import {welcomeMail,verificationMail} from "@/lib/mail-templates";
+import {welcomeMail,verificationMail,passwordChangedMail} from "@/lib/mail-templates";
 import {randomUUID} from "node:crypto";
 import { betterAuth } from "better-auth";
 import { db } from "@/lib/db";
@@ -39,7 +39,7 @@ export const auth = betterAuth({
   } : {},
   account: {accountLinking: {enabled:true,requireLocalEmailVerified:true,allowDifferentEmails:false}},
   plugins: [emailOTP({otpLength:6,expiresIn:600,allowedAttempts:3,storeOTP:'hashed',sendVerificationOnSignUp:true,overrideDefaultEmailVerification:true,disableSignUp:true,rateLimit:{window:60,max:3},sendVerificationOTP:async({email,otp,type})=>{await db.query("UPDATE mail_outbox SET status='expired',encrypted_content=NULL WHERE recipient=lower($1) AND kind='verification' AND status='queued'",[email]);await queueMail('verification',email,verificationMail(otp,type),'otp:'+randomUUID(),{expires:new Date(Date.now()+600000)});}})],
-  emailVerification: {autoSignInAfterVerification:true},
+  emailVerification: {autoSignInAfterVerification:false},
   databaseHooks: { user:{create:{after:async(user)=>{if(user.emailVerified)await queueMail('welcome',user.email,welcomeMail(user.name),'welcome:'+user.id,{actor:user.id});}},update:{after:async(user)=>{if(user.emailVerified)await queueMail('welcome',user.email,welcomeMail(user.name),'welcome:'+user.id,{actor:user.id});}}}, session: { create: { after: async(session) => {
     const role=(await db.query('SELECT role FROM workspace_members WHERE user_id=$1',[session.userId])).rows[0]?.role||'user';
     await organizationEvent(session.userId,role,'sign_in','/api/auth','POST','Account signed in');
@@ -47,6 +47,11 @@ export const auth = betterAuth({
   emailAndPassword: {
     enabled: true,
     requireEmailVerification: true,
+    revokeSessionsOnPasswordReset: true,
+    onPasswordReset: async ({user}) => {
+      await db.query("INSERT INTO workspace_audit(id,target_id,action,details) VALUES($1,$2,'member.password_recovered',$3::jsonb)",[randomUUID(),user.id,JSON.stringify({method:'email_otp',sessionsRevoked:true})]);
+      try{await queueMail('notification',user.email,passwordChangedMail(user.name),'password-changed:'+randomUUID(),{actor:user.id});}catch{console.error('Password-change notification could not be queued.');}
+    },
     disableSignUp: process.env.AUTH_DISABLE_SIGNUP === "true",
     minPasswordLength: 8,
     maxPasswordLength: 128,

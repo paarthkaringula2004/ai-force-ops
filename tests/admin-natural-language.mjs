@@ -10,6 +10,7 @@ const calls=[];let savedRow=null,usageEvents=0;
 const db={query:async(sql,args)=>{
  if(sql.startsWith('SELECT draft'))return {rows:savedRow?[{draft:savedRow}]:[]};
  if(sql.startsWith('DELETE')){calls.push(['delete',...args]);savedRow=null;return {rowCount:1,rows:[]};}
+ if(sql.startsWith('SELECT code,name FROM staff_departments')){calls.push(['lookup',...(args??[])]);return {rows:[{code:7,name:'SDE'}]};}
  if(sql.startsWith('SELECT name'))return {rows:[{name:'Fixture Admin'}]};
  throw new Error('Unexpected SQL: '+sql);
 }};
@@ -46,6 +47,12 @@ const member={role:'admin',active:true,user_id:'fixture',permissions:[]};
 const user=content=>[{role:'user',content}];
 const state=(kind,details={})=>({kind,token:'12345678-1234-1234-1234-123456789abc',ready:false,field:'email',values:{},choices:[],...details});
 const dispatch=(i,m=user('hello'),s=null,access=member)=>router.dispatchAdminIntent('fixture',access,intent(i),m,s);
+for(const mode of ['guide','department','continue','chat','department_lookup']){
+ calls.length=0;
+ const result=await dispatch({mode,capability:mode==='guide'?'Department creation':'',value:mode==='department_lookup'?'SDE':''},user('"SDE" is this dept available ?'),state('department',{field:'department'}));
+ assert.match(result.reply,/Yes, \*\*SDE\*\*/);assert.deepEqual(calls,[['lookup','SDE']]);
+}
+assert.ok(intents.adminIntentToolsForState(null).some(tool=>tool.name==='read_company_departments'));
 for(const c of guide.adminCapabilities){const result=await dispatch({mode:'guide',capability:c.name});assert.ok(result?.reply,c.name);}
 for(const doc of docs.organizationDocuments){
  calls.length=0;await dispatch({mode:'document',documentType:doc.id,fields:[{key:'name',value:'Abhinav'},{key:'email',value:'abhinav@example.com'}]},user('Prepare this for Abhinav at abhinav@example.com'));

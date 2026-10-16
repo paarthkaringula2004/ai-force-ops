@@ -1,6 +1,6 @@
 import { readMeetingRooms } from "./meeting-rooms";
 import { builtinTool } from "./builtin-project-tool-settings";
-import { approveIntegration, prepareIntegration, integrationCapabilities, requireIntegrationAdmin } from "./integrations/runtime";
+import { approveIntegration, prepareIntegration, integrationCapabilities } from "./integrations/runtime";
 import { resolveProjectBinding } from "./integrations/project-tools";
 import { serviceHealthEvidence } from "./agent-service-health";
 import { readServiceNowIncidents, serviceNowStatus } from "./agent-servicenow";
@@ -389,7 +389,7 @@ export async function runStudioAgent(user: string, id: string, messages: StudioM
 
             if (text(node.data.referenceId).startsWith("integration:")||text(node.data.referenceId).startsWith("project:")) {
               if (dependencies?.sharedViewer || dependencies?.published) throw new InputError("Integration operations are available in the Admin's private agent preview.",403);
-              await requireIntegrationAdmin(user);
+
               const binding=text(node.data.referenceId).startsWith("project:")?await resolveProjectBinding(user,text(node.data.referenceId).slice(8)):null;
               const provider=binding?.provider||text(node.data.referenceId).slice("integration:".length);
               let params;try{params=JSON.parse(args.request || "{}");}catch{throw new InputError('Use JSON {"operation":"capabilities"} or {"operation":"operation-id","inputs":{}}.');}

@@ -10,11 +10,12 @@ import {load} from './helpers/load-ts.mjs';
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:1,connectionTimeoutMillis:10000}),client=await pool.connect();
 const db={query:(sql,args)=>client.query(sql,args)};
 const catalog=load('lib/integrations/catalog.ts'),transport=load('lib/eassist/transport.ts');
-const registry=load('lib/integrations/registry.ts',{'../db':{db},'../eassist/transport':transport,'./catalog':catalog});
+const access={integrationAccess:async()=>({admin:true,canCreate:true,own:[],grants:[]}),requireIntegrationAccess:async()=>{}};
+const registry=load('lib/integrations/registry.ts',{'../db':{db},'../eassist/transport':transport,'./catalog':catalog,'./access':access});
 const store=load('lib/integrations/store.ts',{'../db':{db},'../eassist/transport':transport,'./registry':registry,'./catalog':catalog});
 const project=load('lib/integrations/project-tools.ts',{'../db':{db},'../eassist/transport':transport,'./registry':registry,'./store':store});
-const runtime=load('lib/integrations/runtime.ts',{'../db':{db},'../eassist/transport':transport,'../eassist/security':{securityPolicy:async()=>({allow_runs:true,allow_writes:true,allow_deletes:false,max_concurrent:3})},'../workspace-access':{workspaceAccess:async()=>({role:'admin'})},'../workspace-permissions':{permitted:()=>true},'./registry':registry,'./catalog':catalog,'./store':store,'./transport':{external:async()=>{throw Error('NO NETWORK ALLOWED IN THIS TEST');}}});
-const monitor=load('lib/integrations/monitor.ts',{'../db':{db},'../eassist/transport':transport,'./runtime':runtime});
+const runtime=load('lib/integrations/runtime.ts',{'./access':access,'../db':{db},'../eassist/transport':transport,'../eassist/security':{securityPolicy:async()=>({allow_runs:true,allow_writes:true,allow_deletes:false,max_concurrent:3})},'../workspace-access':{workspaceAccess:async()=>({role:'admin'})},'../workspace-permissions':{permitted:()=>true},'./registry':registry,'./catalog':catalog,'./store':store,'./transport':{external:async()=>{throw Error('NO NETWORK ALLOWED IN THIS TEST');}}});
+const monitor=load('lib/integrations/monitor.ts',{'./access':access,'../db':{db},'../eassist/transport':transport,'./runtime':runtime});
 try {
  await client.query('BEGIN');
  const user=randomUUID();

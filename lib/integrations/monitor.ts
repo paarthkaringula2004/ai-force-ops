@@ -1,9 +1,10 @@
+import { requireIntegrationAccess } from "./access";
 import { db } from "../db";
 import { InputError, seal, unseal } from "../eassist/transport";
-import { integrationCapabilities, prepareIntegration, requireIntegrationAdmin } from "./runtime";
+import { integrationCapabilities, prepareIntegration } from "./runtime";
 
 export async function configureMonitor(user:string,provider:string,operation:string,inputs:unknown,interval:number,enabled:boolean) {
- await requireIntegrationAdmin(user);
+ await requireIntegrationAccess(user,provider);
  const capabilities=await integrationCapabilities(user,provider);
  if(!capabilities.configured)throw new InputError("Save the provider connection first.",409);
  if(!capabilities.operations.some(o=>o.id===operation&&!o.requiresApproval))throw new InputError("Only read operations can be monitored.");
@@ -14,7 +15,7 @@ export async function configureMonitor(user:string,provider:string,operation:str
 }
 export async function maintainIntegrationMonitors() {
  // A small leased batch bounds work and prevents multiple app workers polling the same source.
- const jobs=(await db.query(`WITH due AS (SELECT m.user_id,m.provider FROM integration_monitors m JOIN integration_connections c USING(user_id,provider) JOIN workspace_members w USING(user_id) WHERE m.enabled AND c.enabled AND w.active AND w.role='admin' AND m.next_run_at<=now() AND (m.lease_until IS NULL OR m.lease_until<now()) ORDER BY m.next_run_at FOR UPDATE OF m SKIP LOCKED LIMIT 2)
+ const jobs=(await db.query(`WITH due AS (SELECT m.user_id,m.provider FROM integration_monitors m JOIN integration_connections c USING(user_id,provider) JOIN workspace_members w USING(user_id) WHERE m.enabled AND c.enabled AND w.active AND m.next_run_at<=now() AND (m.lease_until IS NULL OR m.lease_until<now()) ORDER BY m.next_run_at FOR UPDATE OF m SKIP LOCKED LIMIT 2)
  UPDATE integration_monitors m SET lease_until=now()+interval '3 minutes',next_run_at=now()+m.interval_seconds*interval '1 second' FROM due WHERE m.user_id=due.user_id AND m.provider=due.provider RETURNING m.*`)).rows;
  await Promise.allSettled(jobs.map(async job=>{
   try {
@@ -32,7 +33,7 @@ export async function maintainIntegrationMonitors() {
  return {processed:jobs.length};
 }
 export async function monitorSnapshot(user:string,provider:string) {
- await requireIntegrationAdmin(user);
+ await requireIntegrationAccess(user,provider);
  const row=(await db.query("SELECT operation,enabled,interval_seconds,last_status,last_checked_at,result_cipher FROM integration_monitors WHERE user_id=$1 AND provider=$2",[user,provider])).rows[0];
  if(!row)return {configured:false};
  const {result_cipher,...meta}=row;

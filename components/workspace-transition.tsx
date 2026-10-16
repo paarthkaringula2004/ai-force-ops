@@ -1,13 +1,27 @@
 "use client";
 import {useEffect,useState} from "react";
 import { Bot, Command, Layers3, LoaderCircle, Sparkles } from "lucide-react";
+import { claimNavigationRecovery } from "@/lib/workspace-navigation-recovery";
 
 export type WorkspaceDestination = "eAssist" | "ePACE" | "Review Center" | "Agent Studio";
 
 export default function WorkspaceTransition({ destination, href }: { destination: WorkspaceDestination; href?:string }) {
   const [slow,setSlow]=useState(false);
-  useEffect(()=>{const timer=setTimeout(()=>setSlow(true),10000);return()=>clearTimeout(timer);},[]);
-  const recovery=href||{"eAssist":"/service-review-center/eassist","ePACE":"/service-review-center/epace","Review Center":"/service-review-center","Agent Studio":"/dashboard"}[destination];
+  const [failed,setFailed]=useState(false);
+  const defaultHref={"eAssist":"/service-review-center/eassist","ePACE":"/service-review-center/epace","Review Center":"/service-review-center","Agent Studio":"/dashboard"}[destination];
+  const [recovery,setRecovery]=useState(href||defaultHref);
+  useEffect(()=>{
+    const path=window.location.pathname;
+    const target=href||(path===defaultHref||path.startsWith(defaultHref+"/")?path+window.location.search:defaultHref);
+    const slowTimer=setTimeout(()=>{setSlow(true);setRecovery(target);},10000);
+    const retryTimer=setTimeout(()=>{
+      try {
+        if(claimNavigationRecovery(window.sessionStorage,target)) {window.location.replace(target);return;}
+      } catch { /* Storage can be unavailable in private browser sessions. */ }
+      setFailed(true);
+    },30000);
+    return()=>{clearTimeout(slowTimer);clearTimeout(retryTimer);};
+  },[href,defaultHref]);
   const Icon = { eAssist: Bot, ePACE: Sparkles, "Review Center": Layers3, "Agent Studio": Command }[destination];
 
   return (
@@ -17,9 +31,9 @@ export default function WorkspaceTransition({ destination, href }: { destination
           <span aria-hidden="true" className="absolute -inset-2 rounded-[2rem] border border-indigo-200 motion-safe:animate-pulse" />
           <Icon aria-hidden="true" className="size-9" />
         </div>
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900">Opening {destination}…</h2>
-        <p className="mt-2 text-sm text-slate-500">{slow?"This is taking longer than expected. You can reopen the page directly.":"Preparing your workspace"}</p>
-        <LoaderCircle aria-hidden="true" className="mx-auto mt-6 size-5 text-indigo-600 motion-safe:animate-spin" />
+        <h2 className="text-xl font-semibold tracking-tight text-slate-900">{failed?`Couldn’t open ${destination}`:`Opening ${destination}…`}</h2>
+        <p className="mt-2 text-sm text-slate-500">{failed?"The connection did not finish. Try opening the page again.":slow?"This is taking longer than expected. Reconnecting if needed…":"Preparing your workspace"}</p>
+        {!failed&&<LoaderCircle aria-hidden="true" className="mx-auto mt-6 size-5 text-indigo-600 motion-safe:animate-spin" />}
         {slow&&<a href={recovery} className="mt-6 inline-flex rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white">Open {destination}</a>}
       </div>
     </div>

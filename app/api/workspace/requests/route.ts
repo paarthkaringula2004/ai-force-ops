@@ -11,8 +11,10 @@ export async function GET(request:Request) {
  if(!actor)return Response.json({error:'Sign in required.'},{status:401});
  const member=await workspaceAccess(actor),scope=new URL(request.url).searchParams.get('scope')||'own';
  if(!member.active||!['own','team','all'].includes(scope)||(scope==='team'&&!permitted(member,'team'))||(scope==='all'&&!permitted(member,'admin')))return Response.json({error:'This request scope is not permitted.'},{status:403});
- const clause=scope==='own'?'r.user_id=$1':scope==='team'?'m.manager_id=$1 AND r.user_id<>$1':'$1::text IS NOT NULL';
- const requests=await db.query(`SELECT r.*,u.name AS employee_name,u.email AS employee_email,m.department,m.manager_id,m.role AS employee_role,manager.name AS manager_name,decider.name AS decided_by_name FROM employee_service_requests r JOIN "user" u ON u.id=r.user_id JOIN workspace_members m ON m.user_id=r.user_id LEFT JOIN "user" manager ON manager.id=m.manager_id LEFT JOIN "user" decider ON decider.id=r.decided_by WHERE ${clause} ORDER BY r.created_at DESC LIMIT 200`,[actor]);
+ const focused=new URL(request.url).searchParams.get('request');
+ if(focused&&!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(focused))return Response.json({error:'Invalid request ID.'},{status:400});
+ const clause=scope==='own'?'r.user_id=$1':scope==='team'?"m.manager_id=$1 AND r.user_id<>$1 AND r.kind<>'ticket_topup'":'$1::text IS NOT NULL';
+ const requests=await db.query(`SELECT r.*,u.name AS employee_name,u.email AS employee_email,m.department,m.manager_id,m.role AS employee_role,manager.name AS manager_name,decider.name AS decided_by_name FROM employee_service_requests r JOIN "user" u ON u.id=r.user_id JOIN workspace_members m ON m.user_id=r.user_id LEFT JOIN "user" manager ON manager.id=m.manager_id LEFT JOIN "user" decider ON decider.id=r.decided_by WHERE ${clause} ORDER BY (r.id=$2::uuid) DESC NULLS LAST,r.created_at DESC LIMIT 200`,[actor,focused]);
  const team=scope==='own'?[]:(await db.query(`SELECT m.user_id,m.role,m.department,m.employee_id,m.active,m.employment_verified_at,u.name,u.email FROM workspace_members m JOIN "user" u ON u.id=m.user_id WHERE ${scope==='team'?'m.manager_id=$1':'$1::text IS NOT NULL'} ORDER BY u.name`,[actor])).rows;
  return Response.json({requests:requests.rows,team,scope,member,deleteEnabled:process.env.NODE_ENV==='development'},{headers:{'Cache-Control':'private, no-store'}});
 }

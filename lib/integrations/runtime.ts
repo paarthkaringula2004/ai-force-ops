@@ -10,6 +10,8 @@ import { resolveProvider } from "./registry";
 import { loadConnection, parseMappings, type Connection } from "./store";
 import { external, awsHeaders, azureToken } from "./transport";
 
+import { requireIntegrationAccess } from "./access";
+
 export type ApprovalScope = { agentId?: string; graphHash?: string; nodeId?: string; bindingHash?:string };
 const hash = (s: string) => createHash("sha256").update(s).digest("hex");
 const fingerprint=(c:Connection)=>hash(JSON.stringify([Object.entries(c.config).sort(),Object.entries(c.secrets).sort(),c.enabled,c.revision]));
@@ -24,14 +26,14 @@ export function fill(template: string, values: Record<string,unknown>, path = tr
   });
 }
 export async function integrationCapabilities(user: string, provider: string) {
-  await requireIntegrationAdmin(user);
+  await requireIntegrationAccess(user,provider);
   const p=await resolveProvider(user,provider);if(!p)throw new InputError("Integration is unavailable or deleted.",404);
   const c=await loadConnection(user,provider);
   const operations=p.custom && c?.config.mapping ? parseMappings(c.config.mapping) : p.operations;
   return { provider:p.name, configured:!!c, enabled:!!c?.enabled, operations:operations.map(o=>({id:o.id,label:o.label,requiresApproval:!!o.write,example:o.example || {}})), guidance:!c ? "Configure this provider in Tool Library → Integration catalog. No live data is available." : !c.enabled ? "This connection is disabled." : "Operations use current source responses. Saved configuration alone does not prove source access. operation=monitor_snapshot retrieves recorded polling evidence, if configured." };
 }
 async function ready(user:string,provider:string,operation:string) {
-  await requireIntegrationAdmin(user);
+  await requireIntegrationAccess(user,provider);
   const p=await resolveProvider(user,provider);if(!p)throw new InputError("Integration is unavailable or deleted.",404);
   const c=await loadConnection(user,provider);if(!c?.enabled)throw new InputError(`${p.name} is not configured or enabled. Open Tool Library → Integration catalog.`,409);
   const operations=p.custom ? parseMappings(c.config.mapping) : p.operations;
@@ -55,7 +57,7 @@ export async function prepareIntegration(user:string,provider:string,operation:s
   return {status:"awaiting_approval",token:`integration.${token}`,provider,operation,method:op.method,inputs,destination,message:"Review this exact operation. Nothing has been sent. Approval expires in 10 minutes."};
 }
 export async function approveIntegration(user:string,token:string,scope:ApprovalScope={}) {
-  await requireIntegrationAdmin(user);
+  await requireIntegrationAccess(user);
   if(!/^integration\.[A-Za-z0-9_-]{43}$/.test(token))throw new InputError("Invalid approval token.");
   const digest=hash(token.slice("integration.".length));
   const pending=(await db.query("SELECT * FROM integration_approvals WHERE user_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now()",[user,digest])).rows[0];

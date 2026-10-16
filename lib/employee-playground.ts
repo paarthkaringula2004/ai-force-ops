@@ -1,8 +1,9 @@
+import {equipmentAllocation,damagedEquipment} from './equipment-allocation';
 import {organizationWriteAllowed} from './organization-security';
 import {queueLeaveEvent} from "./mail-events";
 import {leaveConversation} from "./leave-conversation";
 import {readableRequestDetails,leaveDeductionSummary} from './leave-display';
-import {adminHome,employeeHome,additionalServices,additionalKind,serviceChoices,requestStatusLabel,requestFieldLabel,type AdditionalKind} from "./employee-services";
+import {ticketTopupIntent,adminHome,employeeHome,additionalServices,additionalKind,serviceChoices,requestStatusLabel,requestFieldLabel,type AdditionalKind} from "./employee-services";
 import { randomUUID } from "node:crypto";
 import { db } from "./db";
 import { workspaceAccess } from "./workspace-access";
@@ -57,7 +58,7 @@ const optionKey=(text:string)=>text.trim().toLowerCase().replace(/[!.]+$/,'');
 // reinterpret a button, a declared option, or a confirmation protocol.
 export function employeeProtocolInput(input:string){
  const text=optionKey(input);
- return [...employeeHome,...serviceChoices,...Object.values(plans).flatMap(steps=>steps.flatMap(step=>step.choices||[])),
+ return ticketTopupIntent(input)||[...employeeHome,...serviceChoices,...Object.values(plans).flatMap(steps=>steps.flatMap(step=>step.choices||[])),
   'Submit request','Confirm submission','Confirm leave','Cancel request','Edit request','Resume my request','Save for later','New chat','Team requests','Employee overview']
   .some(choice=>choice.toLowerCase()===text)||/^edit (?:.+)$/i.test(text);
 }
@@ -68,7 +69,8 @@ function prompt(draft:Draft):Reply {
   if(draft.kind==='leave')return result('Your leave details are saved. Resume the request to review its current dates and balance before confirming.',['Resume my request','Cancel request']);
   const next = plans[draft.kind].find(step=>!draft!.fields[step.key]);
   if(next) return result(next.question,next.choices||[]);
-  return result(`**Review your ${labels[draft.kind].toLowerCase()} request**\n\n${Object.entries(draft.fields).map(([key,value])=>`- **${requestFieldLabel(key)}:** ${value}`).join("\n")}\n\nCheck your details or choose Edit request to change an answer. Your manager or an Admin will review the submitted request. Configured leave emails follow saved submissions and decisions. Company fulfilment and calendar booking require connected company systems.`,["Submit request","Edit request","Cancel request"]);
+  if(draft.kind==='ticket_topup')return result(`**Review your ticket top-up request**\n\n- **Tickets requested:** ${draft.fields.tickets}\n- **Reason:** ${draft.fields.reason}\n\nSubmit this request for Admin review. No tickets have been added. Approval and allocation are separate; an Admin allocates tickets through Administration.`,['Submit request','Edit request','Cancel request']);
+  return result(`**Review your ${labels[draft.kind].toLowerCase()} request**\n\n${Object.entries(draft.fields).map(([key,value])=>`- **${requestFieldLabel(key)}:** ${value}`).join("\n")}\n\nCheck your details or choose Edit request to change an answer. Your manager or an Admin will review the submitted request. ${draft.kind==="equipment"?"No equipment has been ordered or issued.":draft.kind==="room"?"No room has been reserved.":draft.kind==="access"?"Access has not been granted.":"Approval and fulfilment are pending."}`,["Submit request","Edit request","Cancel request"]);
 }
 async function listRequests(client:PoolClient,user:string):Promise<Reply> {
   const rows=(await client.query("SELECT request_number,kind,status,created_at FROM employee_service_requests WHERE user_id=$1 ORDER BY created_at DESC LIMIT 20",[user])).rows;
@@ -83,7 +85,7 @@ function requestDetails(r:SavedRequest):Reply {
 }
 function statusQuestion(text:string):{kind?:Kind}|null {
   if(!/\b(approved|approval|rejected|cancelled|fulfilled|pending|status|progress|who.*(?:approve|reject)|did.*(?:approve|reject))\b/.test(text))return null;
-  const kind:Kind|undefined=/\b(leave|holiday|vacation|time off)\b/.test(text)?"leave":/\b(laptop|equipment|accessories)\b/.test(text)?"equipment":/\b(meeting|room|booking)\b/.test(text)?"room":/\baccess\b/.test(text)?"access":/\b(support|ticket)\b/.test(text)?"support":/\bonboarding\b/.test(text)?"onboarding":additionalKind(text);
+  const kind:Kind|undefined=/\b(?:tickets?|credits?)\b/.test(text)&&/\btop[\s-]*up\b/.test(text)?"ticket_topup":/\b(leave|holiday|vacation|time off)\b/.test(text)?"leave":/\b(laptop|equipment|accessories)\b/.test(text)?"equipment":/\b(meeting|room|booking)\b/.test(text)?"room":/\baccess\b/.test(text)?"access":/\b(support|ticket)\b/.test(text)?"support":/\bonboarding\b/.test(text)?"onboarding":additionalKind(text);
   return kind||/\b(my|request|it)\b/.test(text)?{kind}:null;
 }
 async function requestStatus(client:PoolClient,user:string,kind?:Kind):Promise<Reply> {
@@ -111,6 +113,7 @@ export async function employeeReply(user:string,name:string,input:string,access?
   const member=access||await workspaceAccess(user);
   if(!member.active||member.role==='user')return null;
   if(readOnly){
+    if(ticketTopupIntent(input))return null;
     const own=/\b(?:about me|my profile|who am i|my (?:employee id|emp id|staff id|sap id|department|reporting manager|manager|name|role|email|requests|tickets)|tickets? (?:do i have|left|remaining)|ticket balance)\b/i.test(input)||/\bREQ-[A-Z0-9-]+\b/i.test(input)||!!statusQuestion(input.toLowerCase())&&/\b(?:my|it|request)\b/i.test(input);
     if(!own||/\b(?:team|employees|staff overview)\b/i.test(input))return null;
   }
@@ -122,6 +125,17 @@ export async function employeeReply(user:string,name:string,input:string,access?
     await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))",[`employee-playground:${user}`]);
     const stored=(await client.query("SELECT draft,updated_at::text AS version FROM employee_playground_drafts WHERE user_id=$1",[user])).rows[0];
     let draft=stored?.draft as Draft|undefined;
+    // Route explicit top-ups before any AI-derived fields or stale service context.
+    if(!readOnly&&ticketTopupIntent(input)&&['manager','employee'].includes(member.role)){
+      if(draft&&draft.kind!=='ticket_topup'){
+        await client.query('COMMIT');return result(`Ticket top-ups are reviewed by Admin. Your saved ${labels[draft.kind].toLowerCase()} request is unchanged. Cancel it before starting a ticket top-up, or resume it.`,['Cancel request','Resume my request']);
+      }
+      draft=draft||{id:randomUUID(),kind:'ticket_topup',fields:{}};
+      const supplied=input.match(/\b(?:request|need|want|add|allocate|top[\s-]*up(?:\s+(?:by|with))?)\s+(\d+)\s*(?:tickets?|credits?)\b/i)||input.match(/\b(\d+)\s+(?:tickets?|credits?)\b/i);
+      if(supplied&&Number(supplied[1])>=1&&Number(supplied[1])<=1000000)draft.fields.tickets=String(Number(supplied[1]));
+      await client.query('INSERT INTO employee_playground_drafts(user_id,draft) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO UPDATE SET draft=EXCLUDED.draft,updated_at=now()',[user,JSON.stringify(draft)]);
+      await client.query('COMMIT');return prompt(draft);
+    }
     if(interpretation&&((draft?.id??null)!==interpretation.expectedDraftId||(stored?.version??null)!==interpretation.expectedVersion)){
       await client.query('COMMIT');return result('Your leave details changed while I was interpreting that message. Please send it again so I use the latest details.');
     }
@@ -141,14 +155,17 @@ export async function employeeReply(user:string,name:string,input:string,access?
         const next:Draft=draft||{id:randomUUID(),kind,fields:{}};
         const before=JSON.stringify(next.fields);
         for(const field of intent.fields){
+          if(kind==='equipment'&&field.key==='allocation'&&next.fields.allocation&&!/\breplacement|\breplace|\bupgrade|\bnew allocation|\b(?:first|initial) (?:company |work )?laptop/i.test(input))continue;
           const step=plans[kind].find(item=>item.key===field.key);
           if(!step)throw new Error('The interpreted field is not part of this service.');
-          const value=field.value.trim();
+          const value=kind==='equipment'&&field.key==='allocation'?(equipmentAllocation(input)||equipmentAllocation(field.value)||field.value.trim()):field.value.trim();
           if(!value||value.length>2000)throw new Error('A request detail was invalid.');
           if(step.choices&&!['requirements','accessories'].includes(step.key)&&!step.choices.includes(value)){await client.query('COMMIT');return result(step.question,step.choices);}
+          if(step.key==='tickets'&&(!/^\d+$/.test(value)||Number(value)<1||Number(value)>1000000)){await client.query('COMMIT');return result('Enter a whole number of tickets between 1 and 1,000,000.');}
           if(step.key==='attendees'&&(!/^\d+$/.test(value)||Number(value)<1||Number(value)>1000)){await client.query('COMMIT');return result('How many people will attend? Enter a number between 1 and 1,000.');}
           next.fields[field.key]=value;
         }
+        if(kind==='equipment'&&damagedEquipment(input)&&input.length<=2000&&!next.fields.reason)next.fields.reason=input.trim();
         if(kind==='referral'&&next.fields.consent!=='Yes, candidate consent obtained')delete next.fields.consent;
         draft=next;
         await client.query('INSERT INTO employee_playground_drafts(user_id,draft) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO UPDATE SET draft=EXCLUDED.draft,updated_at=now()',[user,JSON.stringify(draft)]);
@@ -156,6 +173,10 @@ export async function employeeReply(user:string,name:string,input:string,access?
         if(intent.mode==='submit'&&wasComplete&&before===JSON.stringify(next.fields)&&explicit)normalized='submit request';
         else{await client.query('COMMIT');return prompt(draft);}
       }
+    }
+    if(!readOnly&&draft?.kind==='equipment'&&draft.fields.allocation&&/^(?:(?:actually|i mean|make it|change (?:it|allocation) to)[, ]+)?(?:replacement|upgrade|new allocation)[!. ]*$/i.test(input.trim())){
+      const allocation=equipmentAllocation(input);
+      if(allocation){draft.fields.allocation=allocation;await client.query('INSERT INTO employee_playground_drafts(user_id,draft) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO UPDATE SET draft=EXCLUDED.draft,updated_at=now()',[user,JSON.stringify(draft)]);const next=prompt(draft);await client.query('COMMIT');return {...next,reply:`Allocation updated to ${allocation.toLowerCase()}.\n\n${next.reply}`};}
     }
     const leaveAnswer=service||readOnly?null:await leaveConversation(client,user,name,input,member,draft,interpretation?.intent);
     if(leaveAnswer){await client.query('COMMIT');return leaveAnswer;}
@@ -182,7 +203,10 @@ export async function employeeReply(user:string,name:string,input:string,access?
         await client.query("INSERT INTO workspace_audit(id,actor_id,target_id,request_id,action,details) VALUES($1,$2,$2,$3,'request.submitted',$4::jsonb)",[randomUUID(),user,draft.id,JSON.stringify({kind:draft.kind,status:"pending_approval"})]);
         await queueLeaveEvent(client,draft.id);
         await client.query("DELETE FROM employee_playground_drafts WHERE user_id=$1",[user]);
-        answer=result(`**${labels[draft.kind]} request submitted**\n\n- **Request:** ${number}\n- **Status:** Pending approval\n- **Recorded:** ${stamp(row.created_at)}\n\n${draft.kind==="room"?"No room has been reserved or calendar invitation sent.":draft.kind==="access"?"Access has not been granted.":draft.kind==="onboarding"?"Onboarding is pending. Accounts, training and equipment are not marked complete.":"Company approval and fulfilment are pending."} ${member.manager_name?`Your request is available to your manager, ${member.manager_name}, for review.`:"An Admin can review your request. Ask your Admin to assign your reporting manager."} External fulfilment remains separate. When configured, leave notifications are queued for email delivery.`);
+        if(draft.kind==='ticket_topup'){
+          await client.query('COMMIT');return result(`**Ticket top-up request submitted to Admin**\n\n- **Request:** ${number}\n- **Tickets requested:** ${draft.fields.tickets}\n- **Status:** Pending Admin approval\n\nNo tickets have been added. An Admin must review and allocate the tickets. Track the request in [My Requests](/dashboard/my-requests).`);
+        }
+        answer=result(`**${labels[draft.kind]} request submitted**\n\n- **Request:** ${number}\n- **Status:** Pending approval\n- **Recorded:** ${stamp(row.created_at)}\n\n${draft.kind==="room"?"No room has been reserved or calendar invitation sent.":draft.kind==="access"?"Access has not been granted.":draft.kind==="onboarding"?"Onboarding is pending. Accounts, training and equipment are not marked complete.":"Company approval and fulfilment are pending."} ${member.manager_name?`Your request is available to your manager, ${member.manager_name}, for review.`:"Your request is available to Admin for review."}`);
       }
     } else if(/\bREQ-[A-Z0-9-]+\b/i.test(input)) {
       const number=input.match(/\bREQ-[A-Z0-9-]+\b/i)![0].toUpperCase();
@@ -210,21 +234,31 @@ export async function employeeReply(user:string,name:string,input:string,access?
       else if(/\b(request|need|order|want)\b.*\b(laptop|equipment|accessor)\b/.test(normalized))kind="equipment";
       else if(/\b(start|begin|help).*\bonboard|^onboard me$/.test(normalized))kind="onboarding";
       else if(/\b(request|need|grant)\b.*\baccess\b/.test(normalized))kind="access";
-      else if(/\b(system.*configuration|not working|it support|raise.*ticket|report.*issue|device help)\b/.test(normalized))kind="support";
+      else if(/\b(system.*configuration|not working|it support|raise.*ticket|report.*issue|device help)\b/.test(normalized)&&(!draft||draft.kind==="support"||/\b(it support|raise.*ticket|report.*issue|device help)\b/.test(normalized)))kind="support";
       }
+      if(kind===draft?.kind&&currentStep&&![...home,...serviceChoices].some(choice=>optionKey(choice)===optionKey(input)))kind=undefined;
       if(kind) {
         if(draft && draft.kind!==kind)answer=result(`You have a saved ${labels[draft.kind].toLowerCase()} request in progress. Cancel it to start this request, or continue it.`,["Cancel request","Resume my request"]);
-        else {draft=draft||{id:randomUUID(),kind,fields:{}}; if(kind==="leave" && !draft.fields.type) { if(/\b(rh|restricted holiday)\b/.test(normalized)) draft.fields.type="Restricted holiday"; else if(/\bannual\b/.test(normalized)) draft.fields.type="Annual leave"; } answer=prompt(draft);}
+        else {draft=draft||{id:randomUUID(),kind,fields:{}}; if(kind==="leave" && !draft.fields.type) { if(/\b(rh|restricted holiday)\b/.test(normalized)) draft.fields.type="Restricted holiday"; else if(/\bannual\b/.test(normalized)) draft.fields.type="Annual leave"; } if(kind==="equipment"&&!draft.fields.allocation){const allocation=equipmentAllocation(input);if(allocation){draft.fields.allocation=allocation;if(damagedEquipment(input)&&input.length<=2000&&!draft.fields.reason)draft.fields.reason=input.trim();}} answer=prompt(draft);}
       } else if(draft && !/\b(team requests|team approvals|my team|manage users|administration|assign roles|website|aiforce|capabilities|what can you|about me|my profile|who am i|security|scanner|vulnerabilities|system health|repair.*workflow)\b/.test(normalized) && !/^(hi|hello|hey|thanks|thank you)[!. ]*$/.test(normalized)) {
         const step=plans[draft.kind].find(step=>!draft!.fields[step.key]);
         if(step) {
-          if(/\?|^(?:what|which|why|how|can|could|would|do|does|is|are|explain|tell me)\b/i.test(input.trim()))answer=result(`Your saved answers are unchanged. ${step.question}`,step.choices||[]);
+          if(input.length>2000)answer=result("Please keep this detail within 2,000 characters.",step.choices||[]);
+          else if(draft.kind==='equipment'&&step.key==='allocation'){
+            const allocation=equipmentAllocation(input);
+            if(allocation){
+              draft.fields.allocation=allocation;
+              if(damagedEquipment(input)&&input.length<=2000&&!draft.fields.reason)draft.fields.reason=input.trim();
+              const next=prompt(draft);answer={...next,reply:`${allocation==='Replacement'&&damagedEquipment(input)?"I’ll request a replacement for your damaged laptop.":`I’ve selected ${allocation.toLowerCase()}.`}\n\n${next.reply}`};
+            }else answer=result('A replacement replaces a laptop you already have. An upgrade improves your current allocation. A new allocation is an additional or first device. Which describes your request?',step.choices||[]);
+          }
+          else if(/\?|^(?:what|which|why|how|can|could|would|do|does|is|are|explain|tell me)\b/i.test(input.trim()))answer=result(`Your saved answers are unchanged. ${step.question}`,step.choices||[]);
           else if(step.key==="requirements" && /^(i have )?specific requirements$/.test(normalized))answer=result(step.question,step.choices||[]);
-          else if(input.length>2000)answer=result("Please keep this detail within 2,000 characters.",step.choices||[]);
           else if(step.choices && !["requirements","accessories"].includes(step.key) && !step.choices.some(choice=>optionKey(choice)===optionKey(input)))answer=result(step.question,step.choices);
+          else if(step.key==="tickets"&&(!/^\d+(?:\s+tickets?)?$/.test(normalized)||parseInt(normalized,10)<1||parseInt(normalized,10)>1000000))answer=result("Enter a whole number of tickets between 1 and 1,000,000.",[]);
           else if(step.key==="attendees"&&(!/^\d+(?:\s+(?:people|attendees|participants))?$/.test(normalized)||parseInt(normalized,10)<1||parseInt(normalized,10)>1000))answer=result("Enter an attendee count between 1 and 1,000.",[]);
           else if(draft.kind==="referral"&&step.key==="consent"&&normalized.startsWith("no,"))answer=result("Obtain the candidate’s consent before submitting a referral. Your answers are saved; nothing has been submitted.",["Yes, candidate consent obtained","Cancel request"]);
-          else {draft.fields[step.key]=step.key==="attendees"?String(parseInt(normalized,10)):step.choices?.find(choice=>optionKey(choice)===optionKey(input))||input.trim();answer=prompt(draft);}
+          else {draft.fields[step.key]=["attendees","tickets"].includes(step.key)?String(parseInt(normalized,10)):step.choices?.find(choice=>optionKey(choice)===optionKey(input))||input.trim();answer=prompt(draft);}
         } else answer=prompt(draft);
       }
       if(draft&&answer)await client.query("INSERT INTO employee_playground_drafts(user_id,draft) VALUES($1,$2::jsonb) ON CONFLICT(user_id) DO UPDATE SET draft=EXCLUDED.draft,updated_at=now()",[user,JSON.stringify(draft)]);

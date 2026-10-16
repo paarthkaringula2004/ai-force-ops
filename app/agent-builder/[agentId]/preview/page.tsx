@@ -3,6 +3,8 @@
 
 
 import "@xyflow/react/dist/style.css";
+import {Outfit} from "next/font/google";
+import {workflowNodeTypes} from "../../_costumNodes/workflow-node-types";
 
 import {
 
@@ -16,13 +18,12 @@ import {
 
   ReactFlowProvider,
 
-  type NodeTypes,
 
 } from "@xyflow/react";
 
 import { useParams, useRouter } from "next/navigation";
 
-import { ArrowLeft, Code2, Eye, LoaderCircle, Send } from "lucide-react";
+import { ArrowLeft, Eye, LoaderCircle, Send } from "lucide-react";
 
 import ReactMarkdown from "react-markdown";
 
@@ -32,7 +33,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 
 import { WorkflowContext } from "@/context/WorkflowContext";
 
-import { normalizeWorkflowGraph } from "@/lib/workflow-graph";
+import { workflowPreviewGraph } from "@/lib/workflow-graph";
 
 import type { AgentRecord } from "@/lib/agent-store";
 
@@ -42,27 +43,19 @@ import AgentStudioChart from "@/components/agent-studio-chart";
 
 import type { StudioChart } from "@/lib/agent-studio-charts";
 
-import StudioNode from "../../_costumNodes/StudioNode";
 
 import type { StudioTrace, StudioApproval } from "@/lib/agent-studio-runtime";
 
-import AgentNode from "../../_costumNodes/AgentNode";
-
-import ApiNode from "../../_costumNodes/ApiNode";
-
-import EndNode from "../../_costumNodes/EndNode";
-
-import IfElseNode from "../../_costumNodes/IfElseNode";
-
-import StartNode from "../../_costumNodes/StartNode";
-
-import UserApprovalNode from "../../_costumNodes/UserApprovalNode";
-
-import WhileNode from "../../_costumNodes/WhileNode";
 
 
 
-const nodeTypes: NodeTypes = { ModelNode: StudioNode, MemoryNode: StudioNode, ToolsNode: StudioNode, AgentsNode: StudioNode, ReferenceNode: StudioNode, StartNode, AgentNode, ApiNode, EndNode, IfElseNode, WhileNode, UserApprovalNode };
+
+
+
+
+
+
+const originalOutfit = Outfit({subsets:["latin"]});
 
 type Message = { role: "user" | "assistant"; content: string; charts?: StudioChart[] };
 
@@ -94,8 +87,9 @@ function PreviewWorkspace({ agentId }: { agentId: string }) {
 
   const messagesRef = useRef<HTMLDivElement>(null);
 
-  const channelName = useMemo(() => `aiforce-agent-builder:${agentId}`, [agentId]);
 
+  const actual = graph.nodes.some(node=>node.type==="StartNode"&&node.data.workflowMode==="actual");
+  const renderedNodeTypes = useMemo(()=>workflowNodeTypes(actual),[actual]);
   const agentNode = graph.nodes.find((node) => node.type === "AgentNode");
 
   const agentNodeSettings = agentNode?.data.settings && typeof agentNode.data.settings === "object" ? agentNode.data.settings as Record<string, unknown> : {};
@@ -144,7 +138,7 @@ function PreviewWorkspace({ agentId }: { agentId: string }) {
 
         const nextGraph = workflowData.graph
 
-          ? normalizeWorkflowGraph(workflowData.graph.nodes, workflowData.graph.edges)
+          ? workflowPreviewGraph(workflowData.graph.nodes, workflowData.graph.edges)
 
           : { nodes: [], edges: [] };
 
@@ -177,30 +171,6 @@ function PreviewWorkspace({ agentId }: { agentId: string }) {
     if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
 
   }, [messages]);
-
-
-
-  const openEditorDialog = useCallback((mode: "code" | "publish") => {
-
-    if (typeof BroadcastChannel === "undefined") {
-
-      setChatError("Open this Preview from the builder tab to access Code and Publish.");
-
-      return;
-
-    }
-
-    const channel = new BroadcastChannel(channelName);
-
-    channel.postMessage({ type: "open-dialog", mode });
-
-    channel.close();
-
-    setChatError(mode === "code" ? "Code opened in the builder tab." : "Publish opened in the builder tab.");
-
-    window.setTimeout(() => setChatError(""), 2500);
-
-  }, [channelName]);
 
 
 
@@ -302,7 +272,6 @@ function PreviewWorkspace({ agentId }: { agentId: string }) {
 
         <div className="flex min-w-0 items-center gap-3"><button type="button" aria-label="Back to builder" onClick={() => router.push(`/agent-builder/${encodeURIComponent(agentId)}`)} className="flex size-9 items-center justify-center rounded-lg text-[#475467] hover:bg-[#f3f4f7]"><ArrowLeft className="size-5" /></button><div className="min-w-0"><h1 className="truncate text-[15px] font-semibold sm:text-[17px]">{agent.name}</h1><p className="text-[10px] text-[#8992a2]">Agent preview</p></div></div>
 
-        <div className="flex items-center gap-2"><button type="button" onClick={() => openEditorDialog("code")} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-[11px] font-semibold text-[#344054] hover:bg-[#f3f4f7]"><Code2 className="size-4" /><span>Code</span></button><button type="button" onClick={() => openEditorDialog("publish")} className="h-9 rounded-lg bg-[#171923] px-4 text-[11px] font-semibold text-white hover:bg-[#302e48]">Publish</button></div>
 
       </header>
 
@@ -312,9 +281,9 @@ function PreviewWorkspace({ agentId }: { agentId: string }) {
 
           <div className="mb-3 flex shrink-0 items-center gap-2"><Eye className="size-4 text-[#6255e8]" /><h2 className="text-sm font-semibold">Preview</h2><span className="ml-auto text-[10px] text-[#8992a2]">Saved workflow · {graph.nodes.length} nodes</span></div>
 
-          <div className="min-h-0 flex-1 overflow-hidden rounded-xl bg-[#f7f8fc]">
+          <div className={`min-h-0 flex-1 overflow-hidden rounded-xl bg-[#f7f8fc] ${actual ? `actual-agent-canvas ${originalOutfit.className}` : ""}`}>
 
-            <ReactFlow<WorkflowNode, WorkflowEdge> nodes={graph.nodes} edges={graph.edges} nodeTypes={nodeTypes} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnDoubleClick={false} fitView fitViewOptions={{ padding: 0.22 }} minZoom={0.12} maxZoom={1.6} proOptions={{ hideAttribution: false }}>
+            <ReactFlow<WorkflowNode, WorkflowEdge> nodes={graph.nodes} edges={graph.edges} nodeTypes={renderedNodeTypes} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnDoubleClick={false} fitView fitViewOptions={{ padding: 0.22 }} minZoom={0.12} maxZoom={1.6} proOptions={{ hideAttribution: false }}>
 
               <Background variant={BackgroundVariant.Dots} gap={18} size={1.6} color="#b9c1cf" />
 

@@ -1,3 +1,4 @@
+import {departmentLookupQuestion,readDepartmentLookup} from './department-lookup';
 import OpenAI from 'openai';
 import {db} from './db';
 import type {WorkspaceAccess} from './workspace-permissions';
@@ -98,7 +99,14 @@ export async function dispatchAdminIntent(user:string,member:WorkspaceAccess,int
  if(member.role!=='admin'||!member.active)return answer('Active Admin access is required.');
  const input=messages.at(-1)!.content,fields=groundedAdminFields(intent,messages,state);
  const userSource=messages.filter(m=>m.role==='user').map(m=>m.content).concat(Object.values(state?.values??{})).join('\n').toLowerCase();
+ const lookup=departmentLookupQuestion(input);
+ if(lookup&&!(state?.kind==='email'&&state.field==='body'))return readDepartmentLookup(member,lookup.name);
  switch(intent.mode){
+  case 'department_lookup':{
+   const name=intent.value.trim();
+   if(name&&!input.toLowerCase().includes(name.toLowerCase()))return answer('Which department name should I check?',['List departments']);
+   return readDepartmentLookup(member,name||undefined);
+  }
   case 'capabilities':return adminPlaygroundGuide('What can an admin do?',member);
   case 'guide':{
    if(intent.capability==='Team requests')return workspaceRequestChatReply(user,'Team requests',member);

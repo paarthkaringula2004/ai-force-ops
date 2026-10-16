@@ -13,7 +13,7 @@ export async function GET(request:Request) {
  if(!permitted(await workspaceAccess(actor),'admin'))return Response.json({error:'Admin access required.'},{status:403});
  await db.query('SELECT refresh_ticket_wallet(user_id) FROM workspace_members WHERE active');
  const [users,audit]=await Promise.all([
-  db.query(`SELECT m.*,u.name,u.email,manager.name AS manager_name,w.balance AS ticket_balance FROM workspace_members m JOIN "user" u ON u.id=m.user_id LEFT JOIN "user" manager ON manager.id=m.manager_id LEFT JOIN ticket_wallets w ON w.user_id=m.user_id ORDER BY u.name,m.user_id`),
+  db.query(`SELECT m.*,u.name,u.email,u."emailVerified" AS email_verified,EXISTS(SELECT 1 FROM account a WHERE a."userId"=m.user_id AND a."providerId"='credential' AND a.password IS NOT NULL) AS has_password,manager.name AS manager_name,w.balance AS ticket_balance FROM workspace_members m JOIN "user" u ON u.id=m.user_id LEFT JOIN "user" manager ON manager.id=m.manager_id LEFT JOIN ticket_wallets w ON w.user_id=m.user_id ORDER BY u.name,m.user_id`),
   db.query(`SELECT a.id,a.action,a.details,a.created_at,actor.name AS actor_name,target.name AS target_name FROM workspace_audit a LEFT JOIN "user" actor ON actor.id=a.actor_id LEFT JOIN "user" target ON target.id=a.target_id ORDER BY a.created_at DESC LIMIT 100`)
  ]);
  return Response.json({users:users.rows,audit:audit.rows,permissions:[],viewerId:actor,catalog:await readStaffCatalog(db)},{headers:{'Cache-Control':'private, no-store'}});

@@ -3,15 +3,17 @@ import { db } from "../db";
 import { InputError } from "../eassist/transport";
 import { integrationCatalog, providerById, type Provider } from "./catalog";
 
+import { integrationAccess } from "./access";
+
 export async function listProviders(user:string,includeDeleted=false):Promise<Provider[]> {
  const rows=(await db.query("SELECT id,definition,deleted_at FROM integration_definitions WHERE user_id=$1",[user])).rows;
  const overrides=new Map(rows.map(r=>[r.id,r]));
- return [...integrationCatalog.filter(p=>includeDeleted||!overrides.get(p.id)?.deleted_at),...rows.filter(r=>r.definition&&(includeDeleted||!r.deleted_at)).map(r=>r.definition as Provider)];
+ const access=await integrationAccess(user);
+ const shared=[...new Map(access.grants.filter(g=>g.definition&&!overrides.get(g.provider)?.definition).map(g=>[g.provider,g.definition as Provider])).values()];
+ return [...integrationCatalog.filter(p=>includeDeleted||!overrides.get(p.id)?.deleted_at||(!access.admin&&access.grants.some(g=>g.provider===p.id))),...rows.filter(r=>r.definition&&(includeDeleted||!r.deleted_at)).map(r=>r.definition as Provider),...shared].filter(p=>access.admin||access.own.includes(p.id)||access.grants.some(g=>g.provider===p.id));
 }
 export async function resolveProvider(user:string,id:string):Promise<Provider|undefined> {
- const row=(await db.query("SELECT definition,deleted_at FROM integration_definitions WHERE user_id=$1 AND id=$2",[user,id])).rows[0];
- if(row?.deleted_at)return undefined;
- return row?.definition||providerById(id);
+ return (await listProviders(user)).find(p=>p.id===id);
 }
 export async function createProvider(user:string,value:Record<string,unknown>) {
  const name=typeof value.name==="string"?value.name.trim():"",description=typeof value.description==="string"?value.description.trim():"",category=typeof value.category==="string"?value.category.trim():"Custom";
@@ -31,6 +33,8 @@ export async function createProvider(user:string,value:Record<string,unknown>) {
  return provider;
 }
 export async function archiveProvider(user:string,id:string,restore=false) {
+ const access=await integrationAccess(user);
+ if(!access.own.includes(id)&&!(access.admin&&providerById(id)))throw new InputError("Shared integrations cannot be deleted or restored by recipients.",403);
  const p=(await listProviders(user,true)).find(p=>p.id===id);if(!p)throw new InputError("Integration not found.",404);
  const client=await db.connect();
  try {

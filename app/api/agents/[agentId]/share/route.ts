@@ -10,7 +10,9 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
     requireSameOrigin(request);
     const { agentId } = await context.params;
     if (!/^[a-f0-9-]{36}$/i.test(agentId)) throw new InputError("Invalid agent.");
-    const body = await boundedJson(request) as { roles?: unknown };
-    return Response.json(await saveAgentShare(session.user.id, agentId, body.roles));
+    const raw = await boundedJson(request);
+    if(!raw||typeof raw!=="object"||Array.isArray(raw))throw new InputError("Provide sharing settings.");
+    const body = raw as { roles?: unknown; recipientIds?: unknown };
+    return Response.json(await saveAgentShare(session.user.id, agentId, body.roles, body.recipientIds));
   } catch (error) { return Response.json({ error: error instanceof InputError ? error.message : "Could not save sharing." }, { status: error instanceof InputError ? error.status : 503 }); }
 }

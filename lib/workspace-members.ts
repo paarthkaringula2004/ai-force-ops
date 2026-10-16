@@ -28,10 +28,11 @@ export async function updateMemberInTransaction(client:PoolClient,actor:string,b
  if((b.role!=='admin'||!b.active)&&(await client.query('SELECT 1 FROM organization_workspace WHERE owner_id=$1',[b.userId])).rowCount)throw new MemberUpdateError('Select another organization integration owner before changing or disabling this Admin.',409);
  if(expectedUpdatedAt&&old.version!==expectedUpdatedAt)throw new MemberUpdateError('This member changed after your preview. Start again to review the latest details.',409);
  if(old.role==='admin'&&old.active&&(b.role!=='admin'||!b.active)&&!(await client.query("SELECT 1 FROM workspace_members WHERE role='admin' AND active=true AND user_id<>$1",[b.userId])).rowCount)throw new MemberUpdateError('Keep at least one active Admin.',409);
- if(b.managerId){
-  const manager=(await client.query("SELECT * FROM workspace_members WHERE user_id=$1 AND role='manager' AND active=true",[b.managerId])).rows[0];
-  if(!manager||b.managerId===b.userId||b.role==='admin')throw new MemberUpdateError('Choose another active Manager. Admins do not have a reporting manager.');
-  const cycle=await client.query('WITH RECURSIVE chain AS (SELECT user_id,manager_id FROM workspace_members WHERE user_id=$1 UNION SELECT m.user_id,m.manager_id FROM workspace_members m JOIN chain c ON m.user_id=c.manager_id) SELECT 1 FROM chain WHERE user_id=$2',[b.managerId,b.userId]);
+ const managerId=b.role==='admin'||b.role==='manager'?null:b.managerId;
+ if(managerId){
+  const manager=(await client.query("SELECT * FROM workspace_members WHERE user_id=$1 AND role='manager' AND active=true",[managerId])).rows[0];
+  if(!manager||managerId===b.userId||b.role==='admin')throw new MemberUpdateError('Choose another active Manager. Admins do not have a reporting manager.');
+  const cycle=await client.query('WITH RECURSIVE chain AS (SELECT user_id,manager_id FROM workspace_members WHERE user_id=$1 UNION SELECT m.user_id,m.manager_id FROM workspace_members m JOIN chain c ON m.user_id=c.manager_id) SELECT 1 FROM chain WHERE user_id=$2',[managerId,b.userId]);
   if(cycle.rowCount)throw new MemberUpdateError('Reporting relationships cannot form a cycle.');
  }
  const chosenDepartment=(await client.query(b.departmentCode===undefined?'SELECT code,name FROM staff_departments WHERE lower(name)=lower($1)':'SELECT code,name FROM staff_departments WHERE code=$1',[b.departmentCode===undefined?b.department.trim():b.departmentCode])).rows[0];
@@ -43,7 +44,7 @@ export async function updateMemberInTransaction(client:PoolClient,actor:string,b
  const jobTitle=b.jobTitleId===undefined?(departmentCode===old.department_code?old.job_title_id:null):b.jobTitleId;
  if(jobTitle&&!(await client.query('SELECT 1 FROM staff_job_titles WHERE id=$1 AND department_code=$2',[jobTitle,departmentCode])).rowCount)throw new MemberUpdateError('Choose a job title in the selected department.');
  if(b.role==='manager'&&(!departmentCode||!qualification))throw new MemberUpdateError('Select a department and highest completed qualification before assigning Manager.');
- await client.query('UPDATE workspace_members SET role=$2,manager_id=$3,department=$4,permissions=$5,active=$6,department_code=$7,qualification_code=$8,job_title_id=$9,updated_at=now() WHERE user_id=$1',[b.userId,b.role,b.managerId,b.role==='admin'?'':department,[...new Set(b.permissions)],b.active,departmentCode,qualification,jobTitle]);
+ await client.query('UPDATE workspace_members SET role=$2,manager_id=$3,department=$4,permissions=$5,active=$6,department_code=$7,qualification_code=$8,job_title_id=$9,updated_at=now() WHERE user_id=$1',[b.userId,b.role,managerId,b.role==='admin'?'':department,[...new Set(b.permissions)],b.active,departmentCode,qualification,jobTitle]);
  if(old.role==='manager'&&(b.role!=='manager'||!b.active))await client.query('UPDATE workspace_members SET manager_id=NULL,updated_at=now() WHERE manager_id=$1',[b.userId]);
- await client.query("INSERT INTO workspace_audit(id,actor_id,target_id,action,details) VALUES($1,$2,$3,'member.updated',$4::jsonb)",[randomUUID(),actor,b.userId,JSON.stringify({before:old,after:b})]);
+ await client.query("INSERT INTO workspace_audit(id,actor_id,target_id,action,details) VALUES($1,$2,$3,'member.updated',$4::jsonb)",[randomUUID(),actor,b.userId,JSON.stringify({before:old,after:{...b,managerId}})]);
 }

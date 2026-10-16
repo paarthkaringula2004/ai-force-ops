@@ -24,7 +24,7 @@ const db={query:async(sql,a=[])=>{
  if(sql.startsWith('UPDATE project_tool_bindings SET name')){const row=bindings.find(r=>r.user===a[0]&&r.id===a[1]);Object.assign(row,{name:a[2],purpose:a[3],provider:a[4],operation:a[5],defaults:JSON.parse(a[6]),revision:row.revision+1});return {rows:[]};}
  return {rows:[],rowCount:1};
 },connect:async()=>({...db,release(){}})};
-const registry=load('lib/integrations/registry.ts',{'../db':{db},'../eassist/transport':transport,'./catalog':catalog});
+const registry=load('lib/integrations/registry.ts',{'../db':{db},'../eassist/transport':transport,'./catalog':catalog,'./access':{integrationAccess:async(user)=>({admin:true,canCreate:true,own:definitions.filter(r=>r.user===user&&r.definition).map(r=>r.id),grants:[]})}});
 const store=load('lib/integrations/store.ts',{'../db':{db},'../eassist/transport':transport,'./registry':registry});
 const project=load('lib/integrations/project-tools.ts',{'../db':{db},'../eassist/transport':transport,'./registry':registry,'./store':store});
 for(const auth of ['none','basic','bearer','oauth2']){
