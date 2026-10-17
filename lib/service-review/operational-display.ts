@@ -1,8 +1,68 @@
-export function operationalTime(value:unknown){const date=new Date(String(value??''));return value&&Number.isFinite(date.getTime())?new Intl.DateTimeFormat('en-IN',{dateStyle:'medium',timeStyle:'medium',timeZone:'Asia/Kolkata'}).format(date)+' IST':'not recorded';}
-export function operationalStatus(value:string){return ({waiting_confirmation:'Awaiting approval',success:'Completed',error:'Failed',failed:'Failed',running:'Running',waiting:'Queued',queued:'Queued',stopped:'Stopped',connected:'Connected',inactive:'Inactive',active:'Active',resolved:'Resolved',disabled:'Paused'} as Record<string,string>)[value]||value.replaceAll('_',' ');}
-export function recoveryAdvice(error:string){
- if(/runtime is missing|executable file not found|command not found|not recognized as an internal/i.test(error))return {category:'Missing runtime',nextStep:'Install or configure the required runtime on the automation runner, or select a compatible template. A retry alone cannot fix this.',blocked:true};
- if(/unauthorized|forbidden|authentication|invalid token|\b401\b|\b403\b/i.test(error))return {category:'Access problem',nextStep:'Check the integration credentials and source permissions, then recheck the source.',blocked:true};
- if(/timed out|timeout|could not be reached|connection refused|ECONN|ENOTFOUND|network/i.test(error))return {category:'Connection interrupted',nextStep:'Recheck the source first. If it reconnects, review a retry of the existing workflow.',blocked:false};
- return {category:'Workflow needs investigation',nextStep:'Review the error log and configured template. Retry only after checking that the cause is resolved.',blocked:false};
+export function operationalTime(value: unknown) {
+    const date = new Date(String(value ?? ""));
+    return value && Number.isFinite(date.getTime())
+        ? new Intl.DateTimeFormat("en-IN", {
+              dateStyle: "medium",
+              timeStyle: "medium",
+              timeZone: "Asia/Kolkata",
+          }).format(date) + " IST"
+        : "not recorded";
+}
+export function operationalStatus(value: string) {
+    return (
+        (
+            {
+                waiting_confirmation: "Awaiting approval",
+                success: "Completed",
+                error: "Failed",
+                failed: "Failed",
+                running: "Running",
+                waiting: "Queued",
+                queued: "Queued",
+                stopped: "Stopped",
+                connected: "Connected",
+                inactive: "Inactive",
+                active: "Active",
+                resolved: "Resolved",
+                disabled: "Paused",
+            } as Record<string, string>
+        )[value] || value.replaceAll("_", " ")
+    );
+}
+export function recoveryAdvice(error: string) {
+    if (
+        /runtime is missing|executable file not found|command not found|not recognized as an internal/i.test(
+            error,
+        )
+    )
+        return {
+            category: "Missing runtime",
+            nextStep:
+                "Install or configure the required runtime on the automation runner, or select a compatible template. A retry alone cannot fix this.",
+            blocked: true,
+        };
+    if (/unauthorized|forbidden|authentication|invalid token|\b401\b|\b403\b/i.test(error))
+        return {
+            category: "Access problem",
+            nextStep:
+                "Check the integration credentials and source permissions, then recheck the source.",
+            blocked: true,
+        };
+    if (
+        /timed out|timeout|could not be reached|connection refused|ECONN|ENOTFOUND|network/i.test(
+            error,
+        )
+    )
+        return {
+            category: "Connection interrupted",
+            nextStep:
+                "Recheck the source first. If it reconnects, review a retry of the existing workflow.",
+            blocked: false,
+        };
+    return {
+        category: "Workflow needs investigation",
+        nextStep:
+            "Review the error log and configured template. Retry only after checking that the cause is resolved.",
+        blocked: false,
+    };
 }

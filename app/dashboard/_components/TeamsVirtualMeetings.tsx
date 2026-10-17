@@ -1,45 +1,660 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { CalendarDays, CheckCircle2, ExternalLink, Hash, Link2, RefreshCw, Settings2, ShieldCheck, Users, Video } from "lucide-react";
-import { meetingAction, MeetingInvitePicker, meetingInput as input, meetingPrimary as primary, meetingSecondary as secondary, meetingPanel as panel, meetingTime as time } from "./MeetingInvitations";
+import {
+    CalendarDays,
+    CheckCircle2,
+    ExternalLink,
+    Hash,
+    Link2,
+    RefreshCw,
+    Settings2,
+    ShieldCheck,
+    Users,
+    Video,
+} from "lucide-react";
+import {
+    meetingAction,
+    MeetingInvitePicker,
+    meetingInput as input,
+    meetingPrimary as primary,
+    meetingSecondary as secondary,
+    meetingPanel as panel,
+    meetingTime as time,
+} from "./MeetingInvitations";
 
 import { meetingAccess } from "@/lib/meeting-expiry";
 
-type Meeting = { provider: string; id: string; title: string; start: string; end: string; status: string; joinUrl: string | null; meetingId: string | null; passcode: string | null };
-type Data = { checkedAt: string; teams: { configured: boolean; connected: boolean; reason: string; account: { name: string; email: string } | null; setup: { clientId: string; tenantId: string; redirectUri: string } | null }; meetings: Meeting[] };
+type Meeting = {
+    provider: string;
+    id: string;
+    title: string;
+    start: string;
+    end: string;
+    status: string;
+    joinUrl: string | null;
+    meetingId: string | null;
+    passcode: string | null;
+};
+type Data = {
+    checkedAt: string;
+    teams: {
+        configured: boolean;
+        connected: boolean;
+        reason: string;
+        account: { name: string; email: string } | null;
+        setup: { clientId: string; tenantId: string; redirectUri: string } | null;
+    };
+    meetings: Meeting[];
+};
 
 export default function TeamsVirtualMeetings() {
-  const [data, setData] = useState<Data | null>(null), [error, setError] = useState(""), [loadError, setLoadError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState(false);
-  const [kind, setKind] = useState<"now" | "scheduled">("now"), [title, setTitle] = useState(""), [start, setStart] = useState(""), [end, setEnd] = useState(""), [duration, setDuration] = useState(60);
-  const [invite, setInvite] = useState<Meeting | null>(null), [cancel, setCancel] = useState<Meeting | null>(null), [setupOpen, setSetupOpen] = useState(false);
-  const [clientId, setClientId] = useState(""), [tenantId, setTenantId] = useState(""), [clientSecret, setClientSecret] = useState("");
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => { const timer = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(timer); }, []);
-  const loading = useRef(false);
-  const draft = useRef<Record<string, unknown> | null>(null), formRef = useRef<HTMLFormElement>(null);
-  const refresh = useCallback(async (signal?: AbortSignal) => { if (loading.current) return; loading.current = true; try { const response = await fetch("/api/meetings", { cache: "no-store", signal }); const result = await response.json(); if (!response.ok) throw new Error(result.error); if (!signal?.aborted) { setData(result); setLoadError(""); } } catch (e) { if (!signal?.aborted) setLoadError(e instanceof Error ? e.message : "Could not load Teams meetings."); } finally { loading.current = false; } }, []);
-  useEffect(() => { const controller = new AbortController(); const initial = window.setTimeout(() => void refresh(controller.signal), 0); const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(controller.signal); }, 5000); return () => { controller.abort(); window.clearTimeout(initial); window.clearInterval(timer); }; }, [refresh]);
-  useEffect(() => { const outcome = new URLSearchParams(window.location.search).get("teams"); const timer = window.setTimeout(() => { if (outcome === "connected") setNotice("Your Teams account is connected. You can now create your meeting."); else if (outcome === "failed") setError("Teams sign-in could not be completed. Check the app configuration and Microsoft consent, then reconnect."); else if (outcome === "cancelled") setNotice("Teams sign-in was cancelled. You can connect again when ready."); }, 0); return () => window.clearTimeout(timer); }, []);
-  async function action(body: Record<string, unknown>, success = "") { setBusy(true); setError(""); setNotice(""); try { const result = await meetingAction(body); setNotice(success); await refresh(); return result; } catch (e) { setError(e instanceof Error ? e.message : "Meeting request failed."); return null; } finally { setBusy(false); } }
-  function edited() { draft.current = null; setError(""); setNotice(""); }
-  async function create(e: FormEvent) {
-    e.preventDefault();
-    try {
-      if (!draft.current) { const from = kind === "now" ? new Date() : new Date(start); const to = kind === "now" ? new Date(from.getTime() + duration * 60000) : new Date(end); if (!Number.isFinite(from.getTime()) || !Number.isFinite(to.getTime()) || to <= from) throw new Error("Choose valid start and end times."); draft.current = { action: "create", provider: "teams", id: crypto.randomUUID(), kind, title, start: from.toISOString(), end: to.toISOString() }; }
-      const submitted = draft.current;
-      const result = await action(submitted, "Microsoft Teams created your meeting. Invite people below.");
-      if (result) { setInvite({ provider: "teams", id: result.id, title: String(submitted.title), start: String(submitted.start), end: String(submitted.end), status: "ready", joinUrl: result.joinUrl, meetingId: null, passcode: null }); draft.current = null; setTitle(""); }
-    } catch (e) { setError(e instanceof Error ? e.message : "Choose valid meeting details."); }
-  }
-  const connected = !!data?.teams.configured && !!data?.teams.connected;
-  return <div className="space-y-5">
-    {(error || loadError) && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700">{error || loadError}</p>}{notice && <p role="status" className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700"><CheckCircle2 className="size-4 shrink-0" />{notice}</p>}
-    <section className={`${panel} flex flex-wrap items-center justify-between gap-5`}><div className="flex items-start gap-4"><span className="rounded-xl bg-[#f0edff] p-3 text-[#6550ed]"><Video className="size-6" /></span><div><h2 className="text-lg font-semibold text-slate-900">Microsoft Teams</h2><p className="mt-1 text-sm text-slate-500">{data?.teams.account ? `${data.teams.account.name} · ${data.teams.account.email}` : "Connect your work or school account to get started."}</p><p className="mt-2 max-w-xl text-xs leading-5 text-slate-400">{data?.teams.reason || "Checking your Teams connection…"}</p></div></div><div className="flex flex-wrap gap-2">{connected ? <button disabled={busy} className={secondary} onClick={() => void action({ action: "disconnect" }, "Teams disconnected from this workspace. Saved meetings are retained.")}>Disconnect</button> : <form action="/api/teams/start" method="POST"><button disabled={busy || !data?.teams.configured} className={primary}>Connect Teams<ExternalLink className="size-4" /></button></form>}{data?.teams.setup && <button className={secondary} aria-expanded={setupOpen} onClick={() => setSetupOpen(!setupOpen)}><Settings2 className="size-4" />{data.teams.configured ? "App setup" : "Set up Teams"}</button>}<button aria-label="Refresh Teams connection" className={secondary} onClick={() => void refresh()}><RefreshCw className="size-4" /></button></div></section>
-    {data?.teams.setup && setupOpen && <section className={`${panel} border-[#dcd5ff]`}><h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><ShieldCheck className="size-5 text-[#6550ed]" />Connect your organisation</h2><p className="mt-2 text-sm leading-6 text-slate-500">Admin setup: register an application in Microsoft Entra, then save its credentials here. Each organiser will sign in to their own Teams account.</p><ol className="mt-4 list-inside list-decimal space-y-2 text-xs leading-6 text-slate-500"><li><a href="https://entra.microsoft.com/" target="_blank" rel="noopener noreferrer" className="font-semibold text-[#6550ed] underline">Open Microsoft Entra</a> → App registrations → New registration. Choose accounts in your organisational directory.</li><li>Add the following <strong>Web</strong> redirect URI: <code className="break-all rounded bg-[#f5f3ff] px-1.5 py-1 text-[#5140b8]">{data.teams.setup.redirectUri}</code></li><li>Add Microsoft Graph delegated permissions <strong>User.Read</strong> and <strong>OnlineMeetings.ReadWrite</strong>. Obtain administrator consent if your tenant requires it.</li><li>Create a client secret. Paste its <strong>value</strong>, application ID and directory tenant ID below.</li></ol><form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={async e => { e.preventDefault(); const result = await action({ action: "configure-teams", clientId, tenantId, clientSecret }, "App settings saved. Connect Teams to verify Microsoft sign-in and permissions."); if (result) { setClientSecret(""); setSetupOpen(false); } }}><label className="text-sm text-slate-700">Application (client) ID<input required placeholder={data.teams.setup.clientId || "Paste application ID"} value={clientId} onChange={e => setClientId(e.target.value)} className={input} /></label><label className="text-sm text-slate-700">Directory (tenant) ID<input required placeholder={(data.teams.setup.tenantId !== "organizations" ? data.teams.setup.tenantId : "") || "Paste tenant ID"} value={tenantId} onChange={e => setTenantId(e.target.value)} className={input} /></label><label className="text-sm text-slate-700 sm:col-span-2">Client secret value<input required type="password" autoComplete="new-password" maxLength={4096} value={clientSecret} onChange={e => setClientSecret(e.target.value)} className={input} /></label><div className="flex flex-wrap items-center gap-4 sm:col-span-2"><button disabled={busy} className={primary}>Save app settings</button><p className="text-xs text-slate-400">Stored encrypted. Changing the app requires everyone to reconnect.</p></div></form></section>}
-    <div className="grid gap-3 md:grid-cols-3"><button disabled={busy} className={`${panel} text-left transition ${kind === "now" ? "border-[#c8bdff] bg-[#f5f2ff]" : "hover:border-[#c8bdff]"}`} onClick={() => { setKind("now"); edited(); formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}><Link2 className="size-5 text-[#6550ed]" /><h3 className="mt-3 font-semibold text-slate-900">Create a meeting link</h3><p className="mt-2 text-xs leading-5 text-slate-500">Start a conversation now, then invite people.</p></button><button disabled={busy} className={`${panel} text-left transition ${kind === "scheduled" ? "border-[#c8bdff] bg-[#f5f2ff]" : "hover:border-[#c8bdff]"}`} onClick={() => { setKind("scheduled"); edited(); formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" }); }}><CalendarDays className="size-5 text-[#6550ed]" /><h3 className="mt-3 font-semibold text-slate-900">Schedule a meeting</h3><p className="mt-2 text-xs leading-5 text-slate-500">Choose a time and share it with your workspace.</p></button><a href="https://www.microsoft.com/en-us/microsoft-teams/join-a-meeting" target="_blank" rel="noopener noreferrer" className={`${panel} text-left transition hover:border-[#c8bdff]`}><Hash className="size-5 text-[#6550ed]" /><h3 className="mt-3 flex items-center gap-2 font-semibold text-slate-900">Join with a meeting ID<ExternalLink className="size-3.5 text-slate-400" /></h3><p className="mt-2 text-xs leading-5 text-slate-500">Enter your meeting ID and passcode on Microsoft’s join page.</p></a></div>
-    <section className={panel}><h2 className="text-lg font-semibold text-slate-900">{kind === "now" ? "Start your meeting" : "Plan your Teams meeting"}</h2><p className="mt-2 text-sm text-slate-500">1. Connect Teams · 2. Add meeting details · 3. Invite your people</p><form ref={formRef} onSubmit={create} className="mt-5 grid gap-4 sm:grid-cols-2"><label className="text-sm font-medium text-slate-700 sm:col-span-2">Meeting name<input required maxLength={150} disabled={busy} value={title} onChange={e => { setTitle(e.target.value); edited(); }} placeholder="What are you meeting about?" className={input} /></label>{kind === "scheduled" ? <><label className="text-sm font-medium text-slate-700">Starts<input required type="datetime-local" disabled={busy} value={start} onChange={e => { setStart(e.target.value); edited(); }} className={input} /></label><label className="text-sm font-medium text-slate-700">Ends<input required type="datetime-local" disabled={busy} value={end} onChange={e => { setEnd(e.target.value); edited(); }} className={input} /></label></> : <label className="text-sm font-medium text-slate-700">Duration<select disabled={busy} value={duration} onChange={e => { setDuration(Number(e.target.value)); edited(); }} className={input}><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={120}>2 hours</option><option value={240}>4 hours</option></select></label>}<div className="flex flex-wrap items-center gap-4 border-t border-[#efedf6] pt-4 sm:col-span-2"><button disabled={busy || !connected || !title.trim()} className={primary}><Video className="size-4" />{busy ? "Contacting Microsoft…" : kind === "now" ? "Create Teams link" : "Schedule in AIForce.Ops"}</button><p className="text-xs text-slate-400">{connected ? `Times use ${Intl.DateTimeFormat().resolvedOptions().timeZone}.` : "Connect Teams before creating a meeting."}</p></div></form><p className="mt-4 text-xs leading-5 text-slate-400">Schedules and invitations are saved in AIForce.Ops. Creating a Teams link here does not add an Outlook calendar event.</p></section>
-    {invite && <MeetingInvitePicker key={invite.id} id={invite.id} mode="virtual" title={invite.title} onClose={() => setInvite(null)} />}
-    <section className={panel}><h2 className="text-lg font-semibold text-slate-900">My Teams meetings</h2><p className="mt-1 text-xs text-slate-500">Join access here ends at the scheduled end time. Previously copied links follow Microsoft access rules. Updates refresh every five seconds.</p>{!data?.meetings.some(m => m.provider === "teams") ? <p className="mt-5 rounded-xl bg-[#faf9ff] p-5 text-sm text-slate-500">Once Microsoft creates your meeting, its link will appear here.</p> : <div className="mt-5 space-y-3">{data.meetings.filter(m => m.provider === "teams").map(m => meetingAccess(m, now)).map(meeting => <article key={meeting.id} className="rounded-xl border border-[#e9e7f2] p-4"><div className="flex flex-wrap justify-between gap-4"><div><h3 className="font-semibold text-slate-800">{meeting.title}</h3><p className="mt-2 text-xs text-slate-500">{time(meeting.start)} → {time(meeting.end)}</p><p className="mt-2 text-xs text-[#6550ed]">{meeting.status === "expired" ? "Expired - scheduled end time reached" : meeting.status === "creating" ? "Link creation incomplete · Retry safely" : meeting.status === "cancelled" ? "Cancelled" : "Teams link ready"}</p>{meeting.meetingId && meeting.status === "ready" && <details className="mt-2 text-xs text-slate-400"><summary className="cursor-pointer">Meeting ID & passcode</summary><p className="mt-2 select-all">{meeting.meetingId}{meeting.passcode ? ` · Passcode: ${meeting.passcode}` : ""}</p></details>}</div><div className="flex flex-wrap items-start gap-2">{meeting.status === "ready" && <>{meeting.joinUrl && <a href={meeting.joinUrl} target="_blank" rel="noopener noreferrer" className={secondary}><Video className="size-4" />Join</a>}{Date.parse(meeting.end) > Date.parse(data.checkedAt) && <><button className={secondary} onClick={() => setInvite(meeting)}><Users className="size-4" />Invite</button><button disabled={busy} className={secondary} onClick={() => setCancel(meeting)}>Cancel</button></>}</>}{meeting.status === "creating" && <button disabled={busy || !connected} className={secondary} onClick={() => void action({ action: "retry", id: meeting.id }, "Microsoft Teams verified your meeting link.")}><RefreshCw className="size-4" />Retry link creation</button>}</div></div>{cancel?.id === meeting.id && <div className="mt-4 rounded-xl bg-rose-50 p-4"><p className="text-sm text-slate-700">Cancel this Teams meeting for everyone?</p><div className="mt-3 flex gap-4"><button disabled={busy} className="text-sm font-semibold text-rose-700" onClick={async () => { if (await action({ action: "cancel", id: meeting.id }, "Teams meeting cancelled. Invitees will receive an update.")) setCancel(null); }}>Confirm cancellation</button><button disabled={busy} className="text-sm text-slate-500" onClick={() => setCancel(null)}>Keep meeting</button></div></div>}</article>)}</div>}</section>
-  </div>;
+    const [data, setData] = useState<Data | null>(null),
+        [error, setError] = useState(""),
+        [loadError, setLoadError] = useState(""),
+        [notice, setNotice] = useState(""),
+        [busy, setBusy] = useState(false);
+    const [kind, setKind] = useState<"now" | "scheduled">("now"),
+        [title, setTitle] = useState(""),
+        [start, setStart] = useState(""),
+        [end, setEnd] = useState(""),
+        [duration, setDuration] = useState(60);
+    const [invite, setInvite] = useState<Meeting | null>(null),
+        [cancel, setCancel] = useState<Meeting | null>(null),
+        [setupOpen, setSetupOpen] = useState(false);
+    const [clientId, setClientId] = useState(""),
+        [tenantId, setTenantId] = useState(""),
+        [clientSecret, setClientSecret] = useState("");
+    const [now, setNow] = useState(() => Date.now());
+    useEffect(() => {
+        const timer = window.setInterval(() => setNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, []);
+    const loading = useRef(false);
+    const draft = useRef<Record<string, unknown> | null>(null),
+        formRef = useRef<HTMLFormElement>(null);
+    const refresh = useCallback(async (signal?: AbortSignal) => {
+        if (loading.current) return;
+        loading.current = true;
+        try {
+            const response = await fetch("/api/meetings", { cache: "no-store", signal });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error);
+            if (!signal?.aborted) {
+                setData(result);
+                setLoadError("");
+            }
+        } catch (e) {
+            if (!signal?.aborted)
+                setLoadError(e instanceof Error ? e.message : "Could not load Teams meetings.");
+        } finally {
+            loading.current = false;
+        }
+    }, []);
+    useEffect(() => {
+        const controller = new AbortController();
+        const initial = window.setTimeout(() => void refresh(controller.signal), 0);
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === "visible") void refresh(controller.signal);
+        }, 5000);
+        return () => {
+            controller.abort();
+            window.clearTimeout(initial);
+            window.clearInterval(timer);
+        };
+    }, [refresh]);
+    useEffect(() => {
+        const outcome = new URLSearchParams(window.location.search).get("teams");
+        const timer = window.setTimeout(() => {
+            if (outcome === "connected")
+                setNotice("Your Teams account is connected. You can now create your meeting.");
+            else if (outcome === "failed")
+                setError(
+                    "Teams sign-in could not be completed. Check the app configuration and Microsoft consent, then reconnect.",
+                );
+            else if (outcome === "cancelled")
+                setNotice("Teams sign-in was cancelled. You can connect again when ready.");
+        }, 0);
+        return () => window.clearTimeout(timer);
+    }, []);
+    async function action(body: Record<string, unknown>, success = "") {
+        setBusy(true);
+        setError("");
+        setNotice("");
+        try {
+            const result = await meetingAction(body);
+            setNotice(success);
+            await refresh();
+            return result;
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Meeting request failed.");
+            return null;
+        } finally {
+            setBusy(false);
+        }
+    }
+    function edited() {
+        draft.current = null;
+        setError("");
+        setNotice("");
+    }
+    async function create(e: FormEvent) {
+        e.preventDefault();
+        try {
+            if (!draft.current) {
+                const from = kind === "now" ? new Date() : new Date(start);
+                const to =
+                    kind === "now" ? new Date(from.getTime() + duration * 60000) : new Date(end);
+                if (
+                    !Number.isFinite(from.getTime()) ||
+                    !Number.isFinite(to.getTime()) ||
+                    to <= from
+                )
+                    throw new Error("Choose valid start and end times.");
+                draft.current = {
+                    action: "create",
+                    provider: "teams",
+                    id: crypto.randomUUID(),
+                    kind,
+                    title,
+                    start: from.toISOString(),
+                    end: to.toISOString(),
+                };
+            }
+            const submitted = draft.current;
+            const result = await action(
+                submitted,
+                "Microsoft Teams created your meeting. Invite people below.",
+            );
+            if (result) {
+                setInvite({
+                    provider: "teams",
+                    id: result.id,
+                    title: String(submitted.title),
+                    start: String(submitted.start),
+                    end: String(submitted.end),
+                    status: "ready",
+                    joinUrl: result.joinUrl,
+                    meetingId: null,
+                    passcode: null,
+                });
+                draft.current = null;
+                setTitle("");
+            }
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Choose valid meeting details.");
+        }
+    }
+    const connected = !!data?.teams.configured && !!data?.teams.connected;
+    return (
+        <div className="space-y-5">
+            {(error || loadError) && (
+                <p
+                    role="alert"
+                    className="rounded-xl border border-rose-100 bg-rose-50 p-4 text-sm text-rose-700"
+                >
+                    {error || loadError}
+                </p>
+            )}
+            {notice && (
+                <p
+                    role="status"
+                    className="flex items-center gap-2 rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-700"
+                >
+                    <CheckCircle2 className="size-4 shrink-0" />
+                    {notice}
+                </p>
+            )}
+            <section className={`${panel} flex flex-wrap items-center justify-between gap-5`}>
+                <div className="flex items-start gap-4">
+                    <span className="rounded-xl bg-[#f0edff] p-3 text-[#6550ed]">
+                        <Video className="size-6" />
+                    </span>
+                    <div>
+                        <h2 className="text-lg font-semibold text-slate-900">Microsoft Teams</h2>
+                        <p className="mt-1 text-sm text-slate-500">
+                            {data?.teams.account
+                                ? `${data.teams.account.name} · ${data.teams.account.email}`
+                                : "Connect your work or school account to get started."}
+                        </p>
+                        <p className="mt-2 max-w-xl text-xs leading-5 text-slate-400">
+                            {data?.teams.reason || "Checking your Teams connection…"}
+                        </p>
+                    </div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {connected ? (
+                        <button
+                            disabled={busy}
+                            className={secondary}
+                            onClick={() =>
+                                void action(
+                                    { action: "disconnect" },
+                                    "Teams disconnected from this workspace. Saved meetings are retained.",
+                                )
+                            }
+                        >
+                            Disconnect
+                        </button>
+                    ) : (
+                        <form action="/api/teams/start" method="POST">
+                            <button disabled={busy || !data?.teams.configured} className={primary}>
+                                Connect Teams
+                                <ExternalLink className="size-4" />
+                            </button>
+                        </form>
+                    )}
+                    {data?.teams.setup && (
+                        <button
+                            className={secondary}
+                            aria-expanded={setupOpen}
+                            onClick={() => setSetupOpen(!setupOpen)}
+                        >
+                            <Settings2 className="size-4" />
+                            {data.teams.configured ? "App setup" : "Set up Teams"}
+                        </button>
+                    )}
+                    <button
+                        aria-label="Refresh Teams connection"
+                        className={secondary}
+                        onClick={() => void refresh()}
+                    >
+                        <RefreshCw className="size-4" />
+                    </button>
+                </div>
+            </section>
+            {data?.teams.setup && setupOpen && (
+                <section className={`${panel} border-[#dcd5ff]`}>
+                    <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                        <ShieldCheck className="size-5 text-[#6550ed]" />
+                        Connect your organisation
+                    </h2>
+                    <p className="mt-2 text-sm leading-6 text-slate-500">
+                        Admin setup: register an application in Microsoft Entra, then save its
+                        credentials here. Each organiser will sign in to their own Teams account.
+                    </p>
+                    <ol className="mt-4 list-inside list-decimal space-y-2 text-xs leading-6 text-slate-500">
+                        <li>
+                            <a
+                                href="https://entra.microsoft.com/"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="font-semibold text-[#6550ed] underline"
+                            >
+                                Open Microsoft Entra
+                            </a>{" "}
+                            → App registrations → New registration. Choose accounts in your
+                            organisational directory.
+                        </li>
+                        <li>
+                            Add the following <strong>Web</strong> redirect URI:{" "}
+                            <code className="break-all rounded bg-[#f5f3ff] px-1.5 py-1 text-[#5140b8]">
+                                {data.teams.setup.redirectUri}
+                            </code>
+                        </li>
+                        <li>
+                            Add Microsoft Graph delegated permissions <strong>User.Read</strong> and{" "}
+                            <strong>OnlineMeetings.ReadWrite</strong>. Obtain administrator consent
+                            if your tenant requires it.
+                        </li>
+                        <li>
+                            Create a client secret. Paste its <strong>value</strong>, application ID
+                            and directory tenant ID below.
+                        </li>
+                    </ol>
+                    <form
+                        className="mt-5 grid gap-4 sm:grid-cols-2"
+                        onSubmit={async (e) => {
+                            e.preventDefault();
+                            const result = await action(
+                                { action: "configure-teams", clientId, tenantId, clientSecret },
+                                "App settings saved. Connect Teams to verify Microsoft sign-in and permissions.",
+                            );
+                            if (result) {
+                                setClientSecret("");
+                                setSetupOpen(false);
+                            }
+                        }}
+                    >
+                        <label className="text-sm text-slate-700">
+                            Application (client) ID
+                            <input
+                                required
+                                placeholder={data.teams.setup.clientId || "Paste application ID"}
+                                value={clientId}
+                                onChange={(e) => setClientId(e.target.value)}
+                                className={input}
+                            />
+                        </label>
+                        <label className="text-sm text-slate-700">
+                            Directory (tenant) ID
+                            <input
+                                required
+                                placeholder={
+                                    (data.teams.setup.tenantId !== "organizations"
+                                        ? data.teams.setup.tenantId
+                                        : "") || "Paste tenant ID"
+                                }
+                                value={tenantId}
+                                onChange={(e) => setTenantId(e.target.value)}
+                                className={input}
+                            />
+                        </label>
+                        <label className="text-sm text-slate-700 sm:col-span-2">
+                            Client secret value
+                            <input
+                                required
+                                type="password"
+                                autoComplete="new-password"
+                                maxLength={4096}
+                                value={clientSecret}
+                                onChange={(e) => setClientSecret(e.target.value)}
+                                className={input}
+                            />
+                        </label>
+                        <div className="flex flex-wrap items-center gap-4 sm:col-span-2">
+                            <button disabled={busy} className={primary}>
+                                Save app settings
+                            </button>
+                            <p className="text-xs text-slate-400">
+                                Stored encrypted. Changing the app requires everyone to reconnect.
+                            </p>
+                        </div>
+                    </form>
+                </section>
+            )}
+            <div className="grid gap-3 md:grid-cols-3">
+                <button
+                    disabled={busy}
+                    className={`${panel} text-left transition ${kind === "now" ? "border-[#c8bdff] bg-[#f5f2ff]" : "hover:border-[#c8bdff]"}`}
+                    onClick={() => {
+                        setKind("now");
+                        edited();
+                        formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }}
+                >
+                    <Link2 className="size-5 text-[#6550ed]" />
+                    <h3 className="mt-3 font-semibold text-slate-900">Create a meeting link</h3>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Start a conversation now, then invite people.
+                    </p>
+                </button>
+                <button
+                    disabled={busy}
+                    className={`${panel} text-left transition ${kind === "scheduled" ? "border-[#c8bdff] bg-[#f5f2ff]" : "hover:border-[#c8bdff]"}`}
+                    onClick={() => {
+                        setKind("scheduled");
+                        edited();
+                        formRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+                    }}
+                >
+                    <CalendarDays className="size-5 text-[#6550ed]" />
+                    <h3 className="mt-3 font-semibold text-slate-900">Schedule a meeting</h3>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Choose a time and share it with your workspace.
+                    </p>
+                </button>
+                <a
+                    href="https://www.microsoft.com/en-us/microsoft-teams/join-a-meeting"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={`${panel} text-left transition hover:border-[#c8bdff]`}
+                >
+                    <Hash className="size-5 text-[#6550ed]" />
+                    <h3 className="mt-3 flex items-center gap-2 font-semibold text-slate-900">
+                        Join with a meeting ID
+                        <ExternalLink className="size-3.5 text-slate-400" />
+                    </h3>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Enter your meeting ID and passcode on Microsoft’s join page.
+                    </p>
+                </a>
+            </div>
+            <section className={panel}>
+                <h2 className="text-lg font-semibold text-slate-900">
+                    {kind === "now" ? "Start your meeting" : "Plan your Teams meeting"}
+                </h2>
+                <p className="mt-2 text-sm text-slate-500">
+                    1. Connect Teams · 2. Add meeting details · 3. Invite your people
+                </p>
+                <form ref={formRef} onSubmit={create} className="mt-5 grid gap-4 sm:grid-cols-2">
+                    <label className="text-sm font-medium text-slate-700 sm:col-span-2">
+                        Meeting name
+                        <input
+                            required
+                            maxLength={150}
+                            disabled={busy}
+                            value={title}
+                            onChange={(e) => {
+                                setTitle(e.target.value);
+                                edited();
+                            }}
+                            placeholder="What are you meeting about?"
+                            className={input}
+                        />
+                    </label>
+                    {kind === "scheduled" ? (
+                        <>
+                            <label className="text-sm font-medium text-slate-700">
+                                Starts
+                                <input
+                                    required
+                                    type="datetime-local"
+                                    disabled={busy}
+                                    value={start}
+                                    onChange={(e) => {
+                                        setStart(e.target.value);
+                                        edited();
+                                    }}
+                                    className={input}
+                                />
+                            </label>
+                            <label className="text-sm font-medium text-slate-700">
+                                Ends
+                                <input
+                                    required
+                                    type="datetime-local"
+                                    disabled={busy}
+                                    value={end}
+                                    onChange={(e) => {
+                                        setEnd(e.target.value);
+                                        edited();
+                                    }}
+                                    className={input}
+                                />
+                            </label>
+                        </>
+                    ) : (
+                        <label className="text-sm font-medium text-slate-700">
+                            Duration
+                            <select
+                                disabled={busy}
+                                value={duration}
+                                onChange={(e) => {
+                                    setDuration(Number(e.target.value));
+                                    edited();
+                                }}
+                                className={input}
+                            >
+                                <option value={30}>30 minutes</option>
+                                <option value={60}>1 hour</option>
+                                <option value={120}>2 hours</option>
+                                <option value={240}>4 hours</option>
+                            </select>
+                        </label>
+                    )}
+                    <div className="flex flex-wrap items-center gap-4 border-t border-[#efedf6] pt-4 sm:col-span-2">
+                        <button disabled={busy || !connected || !title.trim()} className={primary}>
+                            <Video className="size-4" />
+                            {busy
+                                ? "Contacting Microsoft…"
+                                : kind === "now"
+                                  ? "Create Teams link"
+                                  : "Schedule in AIForce.Ops"}
+                        </button>
+                        <p className="text-xs text-slate-400">
+                            {connected
+                                ? `Times use ${Intl.DateTimeFormat().resolvedOptions().timeZone}.`
+                                : "Connect Teams before creating a meeting."}
+                        </p>
+                    </div>
+                </form>
+                <p className="mt-4 text-xs leading-5 text-slate-400">
+                    Schedules and invitations are saved in AIForce.Ops. Creating a Teams link here
+                    does not add an Outlook calendar event.
+                </p>
+            </section>
+            {invite && (
+                <MeetingInvitePicker
+                    key={invite.id}
+                    id={invite.id}
+                    mode="virtual"
+                    title={invite.title}
+                    onClose={() => setInvite(null)}
+                />
+            )}
+            <section className={panel}>
+                <h2 className="text-lg font-semibold text-slate-900">My Teams meetings</h2>
+                <p className="mt-1 text-xs text-slate-500">
+                    Join access here ends at the scheduled end time. Previously copied links follow
+                    Microsoft access rules. Updates refresh every five seconds.
+                </p>
+                {!data?.meetings.some((m) => m.provider === "teams") ? (
+                    <p className="mt-5 rounded-xl bg-[#faf9ff] p-5 text-sm text-slate-500">
+                        Once Microsoft creates your meeting, its link will appear here.
+                    </p>
+                ) : (
+                    <div className="mt-5 space-y-3">
+                        {data.meetings
+                            .filter((m) => m.provider === "teams")
+                            .map((m) => meetingAccess(m, now))
+                            .map((meeting) => (
+                                <article
+                                    key={meeting.id}
+                                    className="rounded-xl border border-[#e9e7f2] p-4"
+                                >
+                                    <div className="flex flex-wrap justify-between gap-4">
+                                        <div>
+                                            <h3 className="font-semibold text-slate-800">
+                                                {meeting.title}
+                                            </h3>
+                                            <p className="mt-2 text-xs text-slate-500">
+                                                {time(meeting.start)} → {time(meeting.end)}
+                                            </p>
+                                            <p className="mt-2 text-xs text-[#6550ed]">
+                                                {meeting.status === "expired"
+                                                    ? "Expired - scheduled end time reached"
+                                                    : meeting.status === "creating"
+                                                      ? "Link creation incomplete · Retry safely"
+                                                      : meeting.status === "cancelled"
+                                                        ? "Cancelled"
+                                                        : "Teams link ready"}
+                                            </p>
+                                            {meeting.meetingId && meeting.status === "ready" && (
+                                                <details className="mt-2 text-xs text-slate-400">
+                                                    <summary className="cursor-pointer">
+                                                        Meeting ID & passcode
+                                                    </summary>
+                                                    <p className="mt-2 select-all">
+                                                        {meeting.meetingId}
+                                                        {meeting.passcode
+                                                            ? ` · Passcode: ${meeting.passcode}`
+                                                            : ""}
+                                                    </p>
+                                                </details>
+                                            )}
+                                        </div>
+                                        <div className="flex flex-wrap items-start gap-2">
+                                            {meeting.status === "ready" && (
+                                                <>
+                                                    {meeting.joinUrl && (
+                                                        <a
+                                                            href={meeting.joinUrl}
+                                                            target="_blank"
+                                                            rel="noopener noreferrer"
+                                                            className={secondary}
+                                                        >
+                                                            <Video className="size-4" />
+                                                            Join
+                                                        </a>
+                                                    )}
+                                                    {Date.parse(meeting.end) >
+                                                        Date.parse(data.checkedAt) && (
+                                                        <>
+                                                            <button
+                                                                className={secondary}
+                                                                onClick={() => setInvite(meeting)}
+                                                            >
+                                                                <Users className="size-4" />
+                                                                Invite
+                                                            </button>
+                                                            <button
+                                                                disabled={busy}
+                                                                className={secondary}
+                                                                onClick={() => setCancel(meeting)}
+                                                            >
+                                                                Cancel
+                                                            </button>
+                                                        </>
+                                                    )}
+                                                </>
+                                            )}
+                                            {meeting.status === "creating" && (
+                                                <button
+                                                    disabled={busy || !connected}
+                                                    className={secondary}
+                                                    onClick={() =>
+                                                        void action(
+                                                            { action: "retry", id: meeting.id },
+                                                            "Microsoft Teams verified your meeting link.",
+                                                        )
+                                                    }
+                                                >
+                                                    <RefreshCw className="size-4" />
+                                                    Retry link creation
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {cancel?.id === meeting.id && (
+                                        <div className="mt-4 rounded-xl bg-rose-50 p-4">
+                                            <p className="text-sm text-slate-700">
+                                                Cancel this Teams meeting for everyone?
+                                            </p>
+                                            <div className="mt-3 flex gap-4">
+                                                <button
+                                                    disabled={busy}
+                                                    className="text-sm font-semibold text-rose-700"
+                                                    onClick={async () => {
+                                                        if (
+                                                            await action(
+                                                                {
+                                                                    action: "cancel",
+                                                                    id: meeting.id,
+                                                                },
+                                                                "Teams meeting cancelled. Invitees will receive an update.",
+                                                            )
+                                                        )
+                                                            setCancel(null);
+                                                    }}
+                                                >
+                                                    Confirm cancellation
+                                                </button>
+                                                <button
+                                                    disabled={busy}
+                                                    className="text-sm text-slate-500"
+                                                    onClick={() => setCancel(null)}
+                                                >
+                                                    Keep meeting
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </article>
+                            ))}
+                    </div>
+                )}
+            </section>
+        </div>
+    );
 }

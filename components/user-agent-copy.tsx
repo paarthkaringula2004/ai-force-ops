@@ -1,25 +1,193 @@
 "use client";
-import {useEffect,useRef,useState} from 'react';
-import {createPortal} from 'react-dom';
-import {Share2,X,LoaderCircle} from 'lucide-react';
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Share2, X, LoaderCircle } from "lucide-react";
 
-export function UserAgentCopyButton({agent,onSaved}:{agent:{id:string;name:string};onSaved:()=>Promise<void>}){
- const [open,setOpen]=useState(false),[text,setText]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[sent,setSent]=useState(false);
- const requestId=useRef(''),button=useRef<HTMLButtonElement>(null),dialog=useRef<HTMLDivElement>(null);
- const recipients=[...new Set(text.split(/[\s,]+/).filter(Boolean))];
- const close=()=>{setOpen(false);button.current?.focus();};
- useEffect(()=>{if(!open)return;const previous=document.body.style.overflow;document.body.style.overflow='hidden';dialog.current?.querySelector('textarea')?.focus();return()=>{document.body.style.overflow=previous;};},[open]);
- async function send(){
-  if(busy||sent||!recipients.length||recipients.length>10)return;
-  setBusy(true);setError('');
-  try{
-   const response=await fetch(`/api/agents/${agent.id}/copy`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({recipientIds:recipients,requestId:requestId.current})});
-   const result=await response.json();if(!response.ok)throw new Error(result.error||'Could not send this agent.');
-   setSent(true);void onSaved().catch(()=>{});
-  }catch(e){setError(e instanceof Error?e.message:'Could not confirm delivery. Retry here; the same request will not create duplicates.');}finally{setBusy(false);}
- }
- return <><button ref={button} type="button" aria-label={`Share ${agent.name}`} aria-haspopup="dialog" onClick={()=>{requestId.current=crypto.randomUUID();setText('');setError('');setSent(false);setOpen(true);}} className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-[10px] font-semibold text-purple-700 hover:bg-purple-100"><Share2 className="size-3.5"/>Send copy</button>{open&&createPortal(<div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm" onMouseDown={e=>{if(e.target===e.currentTarget&&!busy)close();}}><div ref={dialog} role="dialog" aria-modal="true" aria-labelledby={`copy-title-${agent.id}`} className="max-h-[90dvh] w-full max-w-[510px] overflow-y-auto rounded-3xl bg-white p-6 text-slate-800 shadow-2xl" onKeyDown={e=>{
-  if(e.key==='Escape'&&!busy)close();
-  if(e.key==='Tab'){const items=dialog.current?.querySelectorAll<HTMLElement>('button:not(:disabled),textarea:not(:disabled)');if(!items?.length)return;const first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last.focus();}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first.focus();}}
- }}><div className="flex items-center justify-between gap-3"><h2 id={`copy-title-${agent.id}`} className="text-xl font-semibold">Send an editable copy</h2><button type="button" aria-label="Close sharing" disabled={busy} onClick={close} className="rounded-full p-2 hover:bg-purple-50"><X className="size-5"/></button></div><p className="mt-4 text-sm font-medium">{agent.name}</p><p id="copy-rules" className="mt-2 text-xs leading-5 text-slate-500">Send to specific accounts with the User role. Recipients get independent agents in All agents, with full editing, launch, publish and delete control. Your original stays yours. Sent copies cannot be revoked or updated by you.</p><label className="mt-5 block text-sm font-medium">Recipient user_ids<textarea value={text} onChange={e=>{setText(e.target.value);requestId.current=crypto.randomUUID();}} disabled={busy||sent} rows={4} maxLength={1300} aria-describedby="copy-rules" placeholder="Enter user_id values, separated by commas or new lines" className="mt-2 w-full rounded-xl border border-purple-200 p-3 font-mono text-xs outline-none focus:ring-2 focus:ring-purple-200"/></label><p className="mt-2 text-xs text-slate-500">{recipients.length} selected · Up to 10 Users. Find user_id in Settings / Personal details.</p><p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">API credentials are blank. Private tools and knowledge must be reconnected. API request URLs and bodies are cleared because they may contain secrets. Recipients must configure their own API access. Instructions and other workflow content are included; review them before sending.</p>{error&&<p role="alert" className="mt-3 text-sm text-rose-700">{error}</p>}{sent&&<p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800">Copy delivered. Recipients can find it in All agents. Refresh their Agents page if it is already open.</p>}<div className="mt-6 flex justify-end"><button type="button" disabled={busy||!sent&&(!recipients.length||recipients.length>10)} onClick={()=>sent?close():void send()} className="inline-flex items-center gap-2 rounded-full bg-[#6550ed] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50">{busy&&<LoaderCircle className="size-4 animate-spin"/>}{sent?'Done':'Send editable copy'}</button></div></div></div>,document.body)}</>;
+export function UserAgentCopyButton({
+    agent,
+    onSaved,
+}: {
+    agent: { id: string; name: string };
+    onSaved: () => Promise<void>;
+}) {
+    const [open, setOpen] = useState(false),
+        [text, setText] = useState(""),
+        [busy, setBusy] = useState(false),
+        [error, setError] = useState(""),
+        [sent, setSent] = useState(false);
+    const requestId = useRef(""),
+        button = useRef<HTMLButtonElement>(null),
+        dialog = useRef<HTMLDivElement>(null);
+    const recipients = [...new Set(text.split(/[\s,]+/).filter(Boolean))];
+    const close = () => {
+        setOpen(false);
+        button.current?.focus();
+    };
+    useEffect(() => {
+        if (!open) return;
+        const previous = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        dialog.current?.querySelector("textarea")?.focus();
+        return () => {
+            document.body.style.overflow = previous;
+        };
+    }, [open]);
+    async function send() {
+        if (busy || sent || !recipients.length || recipients.length > 10) return;
+        setBusy(true);
+        setError("");
+        try {
+            const response = await fetch(`/api/agents/${agent.id}/copy`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ recipientIds: recipients, requestId: requestId.current }),
+            });
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.error || "Could not send this agent.");
+            setSent(true);
+            void onSaved().catch(() => {});
+        } catch (e) {
+            setError(
+                e instanceof Error
+                    ? e.message
+                    : "Could not confirm delivery. Retry here; the same request will not create duplicates.",
+            );
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <>
+            <button
+                ref={button}
+                type="button"
+                aria-label={`Share ${agent.name}`}
+                aria-haspopup="dialog"
+                onClick={() => {
+                    requestId.current = crypto.randomUUID();
+                    setText("");
+                    setError("");
+                    setSent(false);
+                    setOpen(true);
+                }}
+                className="inline-flex min-h-8 items-center gap-1.5 rounded-full border border-purple-200 bg-purple-50 px-3 py-1 text-[10px] font-semibold text-purple-700 hover:bg-purple-100"
+            >
+                <Share2 className="size-3.5" />
+                Send copy
+            </button>
+            {open &&
+                createPortal(
+                    <div
+                        className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/35 p-4 backdrop-blur-sm"
+                        onMouseDown={(e) => {
+                            if (e.target === e.currentTarget && !busy) close();
+                        }}
+                    >
+                        <div
+                            ref={dialog}
+                            role="dialog"
+                            aria-modal="true"
+                            aria-labelledby={`copy-title-${agent.id}`}
+                            className="max-h-[90dvh] w-full max-w-[510px] overflow-y-auto rounded-3xl bg-white p-6 text-slate-800 shadow-2xl"
+                            onKeyDown={(e) => {
+                                if (e.key === "Escape" && !busy) close();
+                                if (e.key === "Tab") {
+                                    const items = dialog.current?.querySelectorAll<HTMLElement>(
+                                        "button:not(:disabled),textarea:not(:disabled)",
+                                    );
+                                    if (!items?.length) return;
+                                    const first = items[0],
+                                        last = items[items.length - 1];
+                                    if (e.shiftKey && document.activeElement === first) {
+                                        e.preventDefault();
+                                        last.focus();
+                                    } else if (!e.shiftKey && document.activeElement === last) {
+                                        e.preventDefault();
+                                        first.focus();
+                                    }
+                                }
+                            }}
+                        >
+                            <div className="flex items-center justify-between gap-3">
+                                <h2 id={`copy-title-${agent.id}`} className="text-xl font-semibold">
+                                    Send an editable copy
+                                </h2>
+                                <button
+                                    type="button"
+                                    aria-label="Close sharing"
+                                    disabled={busy}
+                                    onClick={close}
+                                    className="rounded-full p-2 hover:bg-purple-50"
+                                >
+                                    <X className="size-5" />
+                                </button>
+                            </div>
+                            <p className="mt-4 text-sm font-medium">{agent.name}</p>
+                            <p id="copy-rules" className="mt-2 text-xs leading-5 text-slate-500">
+                                Send to specific accounts with the User role. Recipients get
+                                independent agents in All agents, with full editing, launch, publish
+                                and delete control. Your original stays yours. Sent copies cannot be
+                                revoked or updated by you.
+                            </p>
+                            <label className="mt-5 block text-sm font-medium">
+                                Recipient user_ids
+                                <textarea
+                                    value={text}
+                                    onChange={(e) => {
+                                        setText(e.target.value);
+                                        requestId.current = crypto.randomUUID();
+                                    }}
+                                    disabled={busy || sent}
+                                    rows={4}
+                                    maxLength={1300}
+                                    aria-describedby="copy-rules"
+                                    placeholder="Enter user_id values, separated by commas or new lines"
+                                    className="mt-2 w-full rounded-xl border border-purple-200 p-3 font-mono text-xs outline-none focus:ring-2 focus:ring-purple-200"
+                                />
+                            </label>
+                            <p className="mt-2 text-xs text-slate-500">
+                                {recipients.length} selected · Up to 10 Users. Find user_id in
+                                Settings / Personal details.
+                            </p>
+                            <p className="mt-4 rounded-xl bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                                API credentials are blank. Private tools and knowledge must be
+                                reconnected. API request URLs and bodies are cleared because they
+                                may contain secrets. Recipients must configure their own API access.
+                                Instructions and other workflow content are included; review them
+                                before sending.
+                            </p>
+                            {error && (
+                                <p role="alert" className="mt-3 text-sm text-rose-700">
+                                    {error}
+                                </p>
+                            )}
+                            {sent && (
+                                <p
+                                    role="status"
+                                    className="mt-4 rounded-xl bg-emerald-50 p-3 text-sm text-emerald-800"
+                                >
+                                    Copy delivered. Recipients can find it in All agents. Refresh
+                                    their Agents page if it is already open.
+                                </p>
+                            )}
+                            <div className="mt-6 flex justify-end">
+                                <button
+                                    type="button"
+                                    disabled={
+                                        busy ||
+                                        (!sent && (!recipients.length || recipients.length > 10))
+                                    }
+                                    onClick={() => (sent ? close() : void send())}
+                                    className="inline-flex items-center gap-2 rounded-full bg-[#6550ed] px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-50"
+                                >
+                                    {busy && <LoaderCircle className="size-4 animate-spin" />}
+                                    {sent ? "Done" : "Send editable copy"}
+                                </button>
+                            </div>
+                        </div>
+                    </div>,
+                    document.body,
+                )}
+        </>
+    );
 }

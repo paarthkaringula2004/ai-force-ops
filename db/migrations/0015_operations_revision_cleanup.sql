@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION eassist_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION eassist_changed () RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE owner_id text;
 BEGIN
  owner_id := COALESCE(NEW.user_id,OLD.user_id);

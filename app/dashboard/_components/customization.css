@@ -1,25 +1,163 @@
-.customization-editor .pace-rich-input {min-height:500px;outline:none;color:#263247;font-size:14px;line-height:1.8;overflow-wrap:anywhere}
-.customization-editor .pace-rich-input p,.customization-preview p {margin:0 0 18px}
-.customization-editor h1,.customization-preview h1 {font-size:24px;font-weight:700;margin:20px 0 16px}
-.customization-editor h2,.customization-preview h2 {font-size:17px;font-weight:600;margin:24px 0 14px}
-.customization-editor h3,.customization-preview h3 {font-size:15px;font-weight:600;margin:18px 0 12px}
-.customization-editor table,.customization-preview table {width:100%;border-collapse:collapse;font-size:13px;margin:18px 0}
-.customization-editor th,.customization-editor td,.customization-preview th,.customization-preview td {padding:12px;text-align:left;border:1px solid #e5e7ef;vertical-align:top}
-.customization-editor ul,.customization-preview ul {list-style:disc;padding-left:24px;margin:16px 0}
-.customization-editor ol,.customization-preview ol {list-style:decimal;padding-left:24px;margin:16px 0}
-.customization-editor a,.customization-preview a {color:#6255e8;text-decoration:underline}
-.customization-preview {font-size:14px;line-height:1.8;overflow-wrap:anywhere}
-.customization-editor pre,.customization-preview pre {white-space:pre-wrap;background:#f6f7fb;padding:12px;border-radius:8px}
-.pace-selection-toolbar {position:relative;display:flex;align-items:center;gap:2px;padding:4px;border:1px solid #dedbf5;border-radius:12px;background:#fff;color:#223c62;box-shadow:0 8px 28px #25326224;z-index:100}
-.pace-selection-toolbar button {display:flex;align-items:center;justify-content:center;gap:7px;height:32px;padding:0 8px;border:0;border-radius:8px;background:transparent;color:inherit;cursor:pointer;font-size:14px}
-.pace-selection-toolbar button:hover,.pace-selection-toolbar button[aria-pressed="true"],.pace-selection-toolbar button[aria-expanded="true"] {background:#efecff;color:#5437ed}
-.pace-style-menu,.pace-link-menu {position:absolute;bottom:calc(100% + 8px);right:0;width:250px;padding:8px;background:#fff;border:1px solid #dedbf5;border-radius:12px;box-shadow:0 8px 28px #25326224}
-.pace-style-menu button {justify-content:space-between;width:100%;height:36px;padding:0 8px}
-.pace-link-menu {display:flex;gap:6px;width:310px}
-.pace-link-menu input {width:210px;min-width:0;padding:8px;border:1px solid #dedbf5;border-radius:8px}
+.customization-editor .pace-rich-input {
+    min-height: 500px;
+    outline: none;
+    color: #263247;
+    font-size: 14px;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+}
+.customization-editor .pace-rich-input p,
+.customization-preview p {
+    margin: 0 0 18px;
+}
+.customization-editor h1,
+.customization-preview h1 {
+    font-size: 24px;
+    font-weight: 700;
+    margin: 20px 0 16px;
+}
+.customization-editor h2,
+.customization-preview h2 {
+    font-size: 17px;
+    font-weight: 600;
+    margin: 24px 0 14px;
+}
+.customization-editor h3,
+.customization-preview h3 {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 18px 0 12px;
+}
+.customization-editor table,
+.customization-preview table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    margin: 18px 0;
+}
+.customization-editor th,
+.customization-editor td,
+.customization-preview th,
+.customization-preview td {
+    padding: 12px;
+    text-align: left;
+    border: 1px solid #e5e7ef;
+    vertical-align: top;
+}
+.customization-editor ul,
+.customization-preview ul {
+    list-style: disc;
+    padding-left: 24px;
+    margin: 16px 0;
+}
+.customization-editor ol,
+.customization-preview ol {
+    list-style: decimal;
+    padding-left: 24px;
+    margin: 16px 0;
+}
+.customization-editor a,
+.customization-preview a {
+    color: #6255e8;
+    text-decoration: underline;
+}
+.customization-preview {
+    font-size: 14px;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+}
+.customization-editor pre,
+.customization-preview pre {
+    white-space: pre-wrap;
+    background: #f6f7fb;
+    padding: 12px;
+    border-radius: 8px;
+}
+.pace-selection-toolbar {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 4px;
+    border: 1px solid #dedbf5;
+    border-radius: 12px;
+    background: #fff;
+    color: #223c62;
+    box-shadow: 0 8px 28px #25326224;
+    z-index: 100;
+}
+.pace-selection-toolbar button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    height: 32px;
+    padding: 0 8px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+    font-size: 14px;
+}
+.pace-selection-toolbar button:hover,
+.pace-selection-toolbar button[aria-pressed="true"],
+.pace-selection-toolbar button[aria-expanded="true"] {
+    background: #efecff;
+    color: #5437ed;
+}
+.pace-style-menu,
+.pace-link-menu {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    right: 0;
+    width: 250px;
+    padding: 8px;
+    background: #fff;
+    border: 1px solid #dedbf5;
+    border-radius: 12px;
+    box-shadow: 0 8px 28px #25326224;
+}
+.pace-style-menu button {
+    justify-content: space-between;
+    width: 100%;
+    height: 36px;
+    padding: 0 8px;
+}
+.pace-link-menu {
+    display: flex;
+    gap: 6px;
+    width: 310px;
+}
+.pace-link-menu input {
+    width: 210px;
+    min-width: 0;
+    padding: 8px;
+    border: 1px solid #dedbf5;
+    border-radius: 8px;
+}
 
-.customization .customization-primary {background:#6255e8;color:#fff;border-color:#6255e8}
-.customization .customization-primary:hover {background:#5346d2;color:#fff;border-color:#5346d2}
-.customization .customization-primary:active {background:#493cbe;color:#fff}
-.customization .customization-primary:disabled {background:#6255e8;color:#fff;opacity:.72;cursor:wait}
-.customization .customization-primary:focus-visible {outline:3px solid #c7c1ff;outline-offset:3px}
+.customization .customization-primary {
+    background: #6255e8;
+    color: #fff;
+    border-color: #6255e8;
+}
+.customization .customization-primary:hover {
+    background: #5346d2;
+    color: #fff;
+    border-color: #5346d2;
+}
+.customization .customization-primary:active {
+    background: #493cbe;
+    color: #fff;
+}
+.customization .customization-primary:disabled {
+    background: #6255e8;
+    color: #fff;
+    opacity: 0.72;
+    cursor: wait;
+}
+.customization .customization-primary:focus-visible {
+    outline: 3px solid #c7c1ff;
+    outline-offset: 3px;
+}

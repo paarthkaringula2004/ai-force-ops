@@ -12,35 +12,86 @@ import { integrationPurpose } from "@/lib/integrations/catalog";
 import { projectBindings, bindingTool } from "@/lib/integrations/project-tools";
 
 export async function GET(request: Request) {
+    const session = await getRequestSession(request);
 
-  const session = await getRequestSession(request);
+    if (!session?.user)
+        return Response.json({ error: "Sign in to choose connections." }, { status: 401 });
 
-  if (!session?.user) return Response.json({ error: "Sign in to choose connections." }, { status: 401 });
+    const member = await workspaceAccess(session.user.id);
 
-  const member = await workspaceAccess(session.user.id);
+    if (!permitted(member, "agent_studio"))
+        return Response.json({ error: "Agent Studio access required." }, { status: 403 });
 
-  if (!permitted(member, "agent_studio")) return Response.json({ error: "Agent Studio access required." }, { status: 403 });
+    const kind = new URL(request.url).searchParams.get("kind");
 
-  const kind = new URL(request.url).searchParams.get("kind");
+    if (kind === "agents")
+        return Response.json({
+            items: (
+                await db.query(
+                    `SELECT id,name,purpose,'agent' AS "referenceKind" FROM agents WHERE user_id=$1 AND deleted_at IS NULL ORDER BY name`,
+                    [session.user.id],
+                )
+            ).rows,
+        });
 
-  if (kind === "agents") return Response.json({ items: (await db.query(`SELECT id,name,purpose,'agent' AS "referenceKind" FROM agents WHERE user_id=$1 AND deleted_at IS NULL ORDER BY name`, [session.user.id])).rows });
+    if (kind === "memory") {
+        if (!permitted(member, "knowledge"))
+            return Response.json({ error: "Knowledge access required." }, { status: 403 });
 
-  if (kind === "memory") {
+        return Response.json({
+            items: (
+                await db.query(
+                    `SELECT id,name,'Search this project’s indexed documents' AS purpose,'knowledge' AS "referenceKind" FROM epace_projects WHERE user_id=$1 ORDER BY updated_at DESC`,
+                    [session.user.id],
+                )
+            ).rows,
+        });
+    }
 
-    if (!permitted(member, "knowledge")) return Response.json({ error: "Knowledge access required." }, { status: 403 });
+    if (kind === "tools") {
+        const admin = permitted(member, "admin");
+        const integrations = (await listProviders(session.user.id)).map((p) => ({
+            id: `integration:${p.id}`,
+            name: p.name,
+            purpose: integrationPurpose(p),
+            referenceKind: "builtin",
+        }));
+        const custom = admin ? (await projectBindings(session.user.id)).map(bindingTool) : [];
+        const builtin = (await builtinTools(session.user.id))
+            .filter(
+                (tool) =>
+                    tool.enabled &&
+                    (admin ||
+                        [
+                            "profile",
+                            "requests",
+                            "agent_assist",
+                            "chart_visualizer",
+                            "meeting_rooms",
+                        ].includes(tool.id)),
+            )
+            .map((tool) => ({
+                ...tool,
+                purpose: `${tool.purpose}\nCapability limits: ${tool.capabilityPurpose}${tool.defaultRequest ? `\nDefault request when no input is supplied: ${tool.defaultRequest}` : ""}`,
+                referenceKind: "builtin",
+            }));
+        return Response.json(
+            {
+                items: [
+                    ...builtin,
+                    ...integrations,
+                    ...custom,
+                    ...(
+                        await db.query(
+                            `SELECT id,name,purpose,method,endpoint_url AS "endpointUrl",'tool' AS "referenceKind" FROM tools WHERE user_id=$1 ORDER BY name`,
+                            [session.user.id],
+                        )
+                    ).rows,
+                ],
+            },
+            { headers: { "Cache-Control": "no-store" } },
+        );
+    }
 
-    return Response.json({ items: (await db.query(`SELECT id,name,'Search this project’s indexed documents' AS purpose,'knowledge' AS "referenceKind" FROM epace_projects WHERE user_id=$1 ORDER BY updated_at DESC`, [session.user.id])).rows });
-
-  }
-
-  if (kind === "tools") {
-    const admin=permitted(member,"admin");
-    const integrations=(await listProviders(session.user.id)).map(p=>({id:`integration:${p.id}`,name:p.name,purpose:integrationPurpose(p),referenceKind:"builtin"}));
-    const custom=admin?(await projectBindings(session.user.id)).map(bindingTool):[];
-    const builtin=(await builtinTools(session.user.id)).filter(tool=>tool.enabled&&(admin||["profile","requests","agent_assist","chart_visualizer","meeting_rooms"].includes(tool.id))).map(tool=>({...tool,purpose:`${tool.purpose}\nCapability limits: ${tool.capabilityPurpose}${tool.defaultRequest?`\nDefault request when no input is supplied: ${tool.defaultRequest}`:""}`,referenceKind:"builtin"}));
-    return Response.json({items:[...builtin,...integrations,...custom,...(await db.query(`SELECT id,name,purpose,method,endpoint_url AS "endpointUrl",'tool' AS "referenceKind" FROM tools WHERE user_id=$1 ORDER BY name`,[session.user.id])).rows]},{headers:{"Cache-Control":"no-store"}});
-  }
-
-  return Response.json({ error: "Choose agents, tools or memory." }, { status: 400 });
-
+    return Response.json({ error: "Choose agents, tools or memory." }, { status: 400 });
 }

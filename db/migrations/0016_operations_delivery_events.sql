@@ -1,4 +1,4 @@
-CREATE FUNCTION platform_delivery_changed() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE FUNCTION platform_delivery_changed () RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE owner_id text;
 BEGIN
  SELECT user_id INTO owner_id FROM platform_alerts WHERE id=COALESCE(NEW.alert_id,OLD.alert_id);
@@ -8,12 +8,33 @@ BEGIN
  END IF;
  RETURN NULL;
 END $$;
-CREATE TRIGGER platform_delivery_live AFTER INSERT OR UPDATE OR DELETE ON platform_alert_deliveries FOR EACH ROW EXECUTE FUNCTION platform_delivery_changed();
+
+CREATE TRIGGER platform_delivery_live
+AFTER INSERT OR UPDATE OR DELETE ON platform_alert_deliveries FOR EACH ROW
+EXECUTE FUNCTION platform_delivery_changed ();
+
 -- Upgrade early backfill identities to use the originating run, like new signals.
-DELETE FROM platform_alerts a USING epace_records r,platform_alerts current
- WHERE r.user_id=a.user_id AND r.kind='alert' AND r.data->>'runId' IS NOT NULL
- AND a.source='epace' AND a.event_key='quality:'||r.id AND current.user_id=a.user_id
- AND current.source=a.source AND current.event_key='run:'||(r.data->>'runId') AND current.id<>a.id;
-UPDATE platform_alerts a SET event_key='run:'||(r.data->>'runId') FROM epace_records r
- WHERE r.user_id=a.user_id AND r.kind='alert' AND r.data->>'runId' IS NOT NULL
- AND a.source='epace' AND a.event_key='quality:'||r.id;
+DELETE FROM platform_alerts a USING epace_records r,
+platform_alerts current
+WHERE
+    r.user_id = a.user_id
+    AND r.kind = 'alert'
+    AND r.data ->> 'runId' IS NOT NULL
+    AND a.source = 'epace'
+    AND a.event_key = 'quality:' || r.id
+    AND current.user_id = a.user_id
+    AND current.source = a.source
+    AND current.event_key = 'run:' || (r.data ->> 'runId')
+    AND current.id <> a.id;
+
+UPDATE platform_alerts a
+SET
+    event_key = 'run:' || (r.data ->> 'runId')
+FROM
+    epace_records r
+WHERE
+    r.user_id = a.user_id
+    AND r.kind = 'alert'
+    AND r.data ->> 'runId' IS NOT NULL
+    AND a.source = 'epace'
+    AND a.event_key = 'quality:' || r.id;

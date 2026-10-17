@@ -1,21 +1,255 @@
 "use client";
-import { useEffect,useState } from 'react';
-import WorkspaceLink from '@/components/workspace-link';
-import type { ReviewSource,ReviewWorker } from './review-data';
-export default function DataSources({sources,worker,onSync}:{sources:ReviewSource[];worker:ReviewWorker;onSync:()=>Promise<void>}) {
- const [busy,setBusy]=useState(false),[error,setError]=useState(''),[secret,setSecret]=useState(''),[token,setToken]=useState<{expiresAt:string;lastUsedAt:string|null}|null>(null),[payload,setPayload]=useState('');
- async function loadToken(){const r=await fetch('/api/service-review-center/token',{cache:'no-store'});if(!r.ok)throw new Error('Could not load collector settings.');setToken((await r.json()).token);}
- useEffect(()=>{const controller=new AbortController();void fetch('/api/service-review-center/token',{cache:'no-store',signal:controller.signal}).then(async r=>{if(!r.ok)throw new Error('Could not load collector settings.');const b=await r.json();if(!controller.signal.aborted)setToken(b.token);}).catch(e=>{if(!controller.signal.aborted)setError(e.message);});return()=>controller.abort();},[]);
- async function run(action:()=>Promise<void>){setBusy(true);setError('');try{await action();}catch(e){setError(e instanceof Error?e.message:'Request failed.');}finally{setBusy(false);}}
- async function tokenAction(method:string){await run(async()=>{const r=await fetch('/api/service-review-center/token',{method});const b=await r.json();if(!r.ok)throw new Error(b.error||'Token update failed.');setSecret(method==='POST'?b.token:'');await loadToken();});}
- async function importJson(){await run(async()=>{let parsed;try{parsed=JSON.parse(payload);}catch{throw new Error('Enter valid JSON.');}const r=await fetch('/api/service-review-center/records',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(parsed)});const b=await r.json();if(!r.ok)throw new Error(b.error);setPayload('');setError(`Accepted ${b.accepted} readings${b.duplicate?' (already imported)':''}.`);});}
- const workerActive=Boolean(worker?.active);
- const date=(s:string|null)=>s?new Date(s).toLocaleString():'Not yet';
- return <div className="space-y-5 text-sm text-slate-700">
-  <section className={`rounded-2xl border p-5 ${workerActive?'border-indigo-100 bg-indigo-50/40':'border-amber-200 bg-amber-50/40'}`}><h2 className="font-semibold">{workerActive?'Background collector is running':'Background collection needs setup or attention'}</h2><p className="mt-2 leading-6">{workerActive?'The worker can collect readings even when no app browser is open.':worker?.configured?'The app has worker authentication configured, but no recent worker heartbeat was received. Start or check the Render background worker.':'Open-app collection is available. Configure and run the background worker for continuous collection with the app closed.'}</p><p className="mt-2 text-xs">Last worker check: {date(worker?.checkedAt||null)}</p></section>
-  <section className="rounded-2xl border border-slate-200 bg-white p-5"><div className="flex flex-wrap justify-between gap-3"><div><h2 className="font-semibold text-slate-900">Operational data connections</h2><p className="mt-2 max-w-3xl leading-6 text-slate-500">Uses your existing eAssist connections. Readings refresh every five seconds while this review is open. A background worker keeps collecting when everyone closes the app.</p></div><button disabled={busy} onClick={()=>run(onSync)} className="h-10 rounded-xl bg-indigo-600 px-4 text-white disabled:opacity-50">{busy?'Checking…':'Sync now'}</button></div><WorkspaceLink href="/service-review-center/eassist?view=integrations" destination="eAssist" className="mt-4 inline-block font-medium text-indigo-700">Manage integrations →</WorkspaceLink>
-   <div className="mt-5 grid gap-4 lg:grid-cols-2">{sources.map(s=><article key={s.id} className="rounded-xl border border-slate-200 p-4"><div className="flex justify-between gap-3"><strong>{s.name}</strong><span className={`rounded-full px-2 py-1 text-xs ${!s.enabled?'bg-slate-100':s.stale?'bg-amber-50 text-amber-800':'bg-indigo-50 text-indigo-700'}`}>{!s.enabled?'Disabled':s.stale?'Needs attention':'Fresh'}</span></div><p className="mt-2 text-xs text-slate-500">{s.kind} · {s.readingCount} current readings</p><p className="mt-3 text-xs">Source checked: {date(s.checkedAt)}</p><p className="mt-1 text-xs">Stored in Review Center: {date(s.importedAt)}</p>{(s.sourceError||s.importError)&&<p className="mt-3 break-words text-xs text-rose-700">{s.sourceError||s.importError}</p>}{s.stale&&s.enabled&&!s.sourceError&&!s.importError&&<p className="mt-3 text-xs text-amber-800">No successful import in the last two minutes. Check the collector and source.</p>}</article>)}</div>{!sources.length&&<p className="py-5 text-slate-500">No sources connected. Add Prometheus, Alertmanager or Semaphore in eAssist.</p>}</section>
-  <section className="rounded-2xl border border-slate-200 bg-white p-5"><h2 className="font-semibold">Business and custom readings</h2><p className="mt-2 leading-6 text-slate-500">Cost, customer experience, endpoint inventory and compliance data can be sent by an external collector. The token can submit readings and security reports to your account; it cannot read reports, run automation, request AI analysis or read source credentials. Tokens expire after 90 days.</p><div className="mt-4 flex flex-wrap gap-3"><button disabled={busy} onClick={()=>tokenAction('POST')} className="rounded-xl bg-indigo-600 px-4 py-2 text-white">{token?'Replace collector token':'Create collector token'}</button>{token&&<button disabled={busy} onClick={()=>tokenAction('DELETE')} className="rounded-xl border border-slate-200 px-4 py-2">Revoke token</button>}</div>{token&&<p className="mt-3 text-xs">Expires {date(token.expiresAt)} · Last request {date(token.lastUsedAt)}</p>}{secret&&<div className="mt-4 rounded-xl bg-indigo-50 p-4"><p className="mb-2 font-medium">Save this token securely. It is shown only now.</p><textarea readOnly aria-label="New collector token" value={secret} className="w-full rounded-lg border border-indigo-200 bg-white p-2 font-mono text-xs"/><button onClick={()=>setSecret('')} className="mt-2 text-indigo-700">Hide token</button></div>}<p className="mt-4 text-xs leading-5">Send HTTPS POST requests to /api/service-review-center/records with Authorization: Bearer &lt;token&gt;. Each batch needs a unique UUID batchId. Retrying the same batch is safe. Security scan workers submit reports through the account-scoped report ingestion API.</p><details className="mt-4"><summary className="cursor-pointer font-medium text-indigo-700">Import a JSON batch manually</summary><p className="mt-3 text-xs">Use the documented reading format. Never include credentials in a reading.</p><textarea aria-label="Readings JSON" value={payload} onChange={e=>setPayload(e.target.value)} rows={8} className="mt-3 w-full rounded-xl border border-slate-200 p-3 font-mono text-xs" placeholder={'{"batchId":"UUID","sourceName":"Finance","records":[{"recordType":"metric","recordKey":"financial","payload":{"label":"Verified savings","value":1250,"unit":"USD"},"observedAt":"2026-10-05T08:00:00Z"}]}'}/><button disabled={busy||!payload.trim()} onClick={importJson} className="mt-2 rounded-xl bg-indigo-600 px-4 py-2 text-white disabled:opacity-50">Import readings</button></details></section>
-  {error&&<p role="status" className="rounded-xl border border-indigo-100 bg-indigo-50 p-4">{error}</p>}
- </div>;
+import { useEffect, useState } from "react";
+import WorkspaceLink from "@/components/workspace-link";
+import type { ReviewSource, ReviewWorker } from "./review-data";
+export default function DataSources({
+    sources,
+    worker,
+    onSync,
+}: {
+    sources: ReviewSource[];
+    worker: ReviewWorker;
+    onSync: () => Promise<void>;
+}) {
+    const [busy, setBusy] = useState(false),
+        [error, setError] = useState(""),
+        [secret, setSecret] = useState(""),
+        [token, setToken] = useState<{ expiresAt: string; lastUsedAt: string | null } | null>(null),
+        [payload, setPayload] = useState("");
+    async function loadToken() {
+        const r = await fetch("/api/service-review-center/token", { cache: "no-store" });
+        if (!r.ok) throw new Error("Could not load collector settings.");
+        setToken((await r.json()).token);
+    }
+    useEffect(() => {
+        const controller = new AbortController();
+        void fetch("/api/service-review-center/token", {
+            cache: "no-store",
+            signal: controller.signal,
+        })
+            .then(async (r) => {
+                if (!r.ok) throw new Error("Could not load collector settings.");
+                const b = await r.json();
+                if (!controller.signal.aborted) setToken(b.token);
+            })
+            .catch((e) => {
+                if (!controller.signal.aborted) setError(e.message);
+            });
+        return () => controller.abort();
+    }, []);
+    async function run(action: () => Promise<void>) {
+        setBusy(true);
+        setError("");
+        try {
+            await action();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Request failed.");
+        } finally {
+            setBusy(false);
+        }
+    }
+    async function tokenAction(method: string) {
+        await run(async () => {
+            const r = await fetch("/api/service-review-center/token", { method });
+            const b = await r.json();
+            if (!r.ok) throw new Error(b.error || "Token update failed.");
+            setSecret(method === "POST" ? b.token : "");
+            await loadToken();
+        });
+    }
+    async function importJson() {
+        await run(async () => {
+            let parsed;
+            try {
+                parsed = JSON.parse(payload);
+            } catch {
+                throw new Error("Enter valid JSON.");
+            }
+            const r = await fetch("/api/service-review-center/records", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(parsed),
+            });
+            const b = await r.json();
+            if (!r.ok) throw new Error(b.error);
+            setPayload("");
+            setError(`Accepted ${b.accepted} readings${b.duplicate ? " (already imported)" : ""}.`);
+        });
+    }
+    const workerActive = Boolean(worker?.active);
+    const date = (s: string | null) => (s ? new Date(s).toLocaleString() : "Not yet");
+    return (
+        <div className="space-y-5 text-sm text-slate-700">
+            <section
+                className={`rounded-2xl border p-5 ${workerActive ? "border-indigo-100 bg-indigo-50/40" : "border-amber-200 bg-amber-50/40"}`}
+            >
+                <h2 className="font-semibold">
+                    {workerActive
+                        ? "Background collector is running"
+                        : "Background collection needs setup or attention"}
+                </h2>
+                <p className="mt-2 leading-6">
+                    {workerActive
+                        ? "The worker can collect readings even when no app browser is open."
+                        : worker?.configured
+                          ? "The app has worker authentication configured, but no recent worker heartbeat was received. Start or check the Render background worker."
+                          : "Open-app collection is available. Configure and run the background worker for continuous collection with the app closed."}
+                </p>
+                <p className="mt-2 text-xs">Last worker check: {date(worker?.checkedAt || null)}</p>
+            </section>
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <div className="flex flex-wrap justify-between gap-3">
+                    <div>
+                        <h2 className="font-semibold text-slate-900">
+                            Operational data connections
+                        </h2>
+                        <p className="mt-2 max-w-3xl leading-6 text-slate-500">
+                            Uses your existing eAssist connections. Readings refresh every five
+                            seconds while this review is open. A background worker keeps collecting
+                            when everyone closes the app.
+                        </p>
+                    </div>
+                    <button
+                        disabled={busy}
+                        onClick={() => run(onSync)}
+                        className="h-10 rounded-xl bg-indigo-600 px-4 text-white disabled:opacity-50"
+                    >
+                        {busy ? "Checking…" : "Sync now"}
+                    </button>
+                </div>
+                <WorkspaceLink
+                    href="/service-review-center/eassist?view=integrations"
+                    destination="eAssist"
+                    className="mt-4 inline-block font-medium text-indigo-700"
+                >
+                    Manage integrations →
+                </WorkspaceLink>
+                <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                    {sources.map((s) => (
+                        <article key={s.id} className="rounded-xl border border-slate-200 p-4">
+                            <div className="flex justify-between gap-3">
+                                <strong>{s.name}</strong>
+                                <span
+                                    className={`rounded-full px-2 py-1 text-xs ${!s.enabled ? "bg-slate-100" : s.stale ? "bg-amber-50 text-amber-800" : "bg-indigo-50 text-indigo-700"}`}
+                                >
+                                    {!s.enabled
+                                        ? "Disabled"
+                                        : s.stale
+                                          ? "Needs attention"
+                                          : "Fresh"}
+                                </span>
+                            </div>
+                            <p className="mt-2 text-xs text-slate-500">
+                                {s.kind} · {s.readingCount} current readings
+                            </p>
+                            <p className="mt-3 text-xs">Source checked: {date(s.checkedAt)}</p>
+                            <p className="mt-1 text-xs">
+                                Stored in Review Center: {date(s.importedAt)}
+                            </p>
+                            {(s.sourceError || s.importError) && (
+                                <p className="mt-3 break-words text-xs text-rose-700">
+                                    {s.sourceError || s.importError}
+                                </p>
+                            )}
+                            {s.stale && s.enabled && !s.sourceError && !s.importError && (
+                                <p className="mt-3 text-xs text-amber-800">
+                                    No successful import in the last two minutes. Check the
+                                    collector and source.
+                                </p>
+                            )}
+                        </article>
+                    ))}
+                </div>
+                {!sources.length && (
+                    <p className="py-5 text-slate-500">
+                        No sources connected. Add Prometheus, Alertmanager or Semaphore in eAssist.
+                    </p>
+                )}
+            </section>
+            <section className="rounded-2xl border border-slate-200 bg-white p-5">
+                <h2 className="font-semibold">Business and custom readings</h2>
+                <p className="mt-2 leading-6 text-slate-500">
+                    Cost, customer experience, endpoint inventory and compliance data can be sent by
+                    an external collector. The token can submit readings and security reports to
+                    your account; it cannot read reports, run automation, request AI analysis or
+                    read source credentials. Tokens expire after 90 days.
+                </p>
+                <div className="mt-4 flex flex-wrap gap-3">
+                    <button
+                        disabled={busy}
+                        onClick={() => tokenAction("POST")}
+                        className="rounded-xl bg-indigo-600 px-4 py-2 text-white"
+                    >
+                        {token ? "Replace collector token" : "Create collector token"}
+                    </button>
+                    {token && (
+                        <button
+                            disabled={busy}
+                            onClick={() => tokenAction("DELETE")}
+                            className="rounded-xl border border-slate-200 px-4 py-2"
+                        >
+                            Revoke token
+                        </button>
+                    )}
+                </div>
+                {token && (
+                    <p className="mt-3 text-xs">
+                        Expires {date(token.expiresAt)} · Last request {date(token.lastUsedAt)}
+                    </p>
+                )}
+                {secret && (
+                    <div className="mt-4 rounded-xl bg-indigo-50 p-4">
+                        <p className="mb-2 font-medium">
+                            Save this token securely. It is shown only now.
+                        </p>
+                        <textarea
+                            readOnly
+                            aria-label="New collector token"
+                            value={secret}
+                            className="w-full rounded-lg border border-indigo-200 bg-white p-2 font-mono text-xs"
+                        />
+                        <button onClick={() => setSecret("")} className="mt-2 text-indigo-700">
+                            Hide token
+                        </button>
+                    </div>
+                )}
+                <p className="mt-4 text-xs leading-5">
+                    Send HTTPS POST requests to /api/service-review-center/records with
+                    Authorization: Bearer &lt;token&gt;. Each batch needs a unique UUID batchId.
+                    Retrying the same batch is safe. Security scan workers submit reports through
+                    the account-scoped report ingestion API.
+                </p>
+                <details className="mt-4">
+                    <summary className="cursor-pointer font-medium text-indigo-700">
+                        Import a JSON batch manually
+                    </summary>
+                    <p className="mt-3 text-xs">
+                        Use the documented reading format. Never include credentials in a reading.
+                    </p>
+                    <textarea
+                        aria-label="Readings JSON"
+                        value={payload}
+                        onChange={(e) => setPayload(e.target.value)}
+                        rows={8}
+                        className="mt-3 w-full rounded-xl border border-slate-200 p-3 font-mono text-xs"
+                        placeholder={
+                            '{"batchId":"UUID","sourceName":"Finance","records":[{"recordType":"metric","recordKey":"financial","payload":{"label":"Verified savings","value":1250,"unit":"USD"},"observedAt":"2026-10-05T08:00:00Z"}]}'
+                        }
+                    />
+                    <button
+                        disabled={busy || !payload.trim()}
+                        onClick={importJson}
+                        className="mt-2 rounded-xl bg-indigo-600 px-4 py-2 text-white disabled:opacity-50"
+                    >
+                        Import readings
+                    </button>
+                </details>
+            </section>
+            {error && (
+                <p role="status" className="rounded-xl border border-indigo-100 bg-indigo-50 p-4">
+                    {error}
+                </p>
+            )}
+        </div>
+    );
 }

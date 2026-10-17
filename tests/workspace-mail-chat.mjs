@@ -1,51 +1,124 @@
-import 'dotenv/config';
-import assert from 'node:assert/strict';
-import {randomUUID} from 'node:crypto';
-import {readFileSync} from 'node:fs';
-import {createRequire} from 'node:module';
-import ts from 'typescript';
-import pg from 'pg';
-const require=createRequire(import.meta.url);
-import {load} from './helpers/load-ts.mjs';
-process.env.MAIL_ENCRYPTION_KEY||='ab'.repeat(32);process.env.SMTP_USER||='fixture@example.invalid';process.env.SMTP_PASS||='fixture';
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL}),c=await pool.connect();
-const permissions=load('lib/workspace-permissions.ts'),templates=load('lib/mail-templates.ts');
-const client={query:(sql,args)=>/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)?Promise.resolve({rows:[]}):c.query(sql,args),release(){}};
-const db={connect:async()=>client,query:(sql,args)=>c.query(sql,args)};
-const mail=load('lib/mail.ts',{'server-only':{},'./db':{db},'./mail-templates':templates});
-const {workspaceMailChatReply:reply}=load('lib/workspace-mail-chat.ts',{'./db':{db},'./workspace-permissions':permissions,'./mail':mail,'./mail-templates':templates});
-try{
- await c.query('BEGIN');const id=randomUUID();await c.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',[id,'Mail chat test',id+'@example.invalid']);await c.query("UPDATE workspace_members SET role='admin' WHERE user_id=$1",[id]);
- const admin={user_id:id,role:'admin',active:true,permissions:[]};
- assert.match((await reply(id,'send a mail to fixture@example.com about offer letter, role: Software Development',{...admin,role:'employee'})).reply,/Only an active Admin/);
- const start=await reply(id,'send a mail to fixture@example.com about offer letter, role: Software Development',admin);assert.match(start.reply,/Paste the complete email body/);assert.deepEqual(start.choices,['Cancel email']);
- const body='Dear Abhinav,\n\n  Software Development offer.\nFurther details we will contact you.\n\nKind regards,\nAIForce.Ops\n';
- const preview=await reply(id,body,admin);assert.match(preview.reply,/Review email before sending/);assert.ok(preview.choices[0].startsWith('Confirm send email '));
- assert.equal((await c.query('SELECT 1 FROM mail_outbox WHERE actor_id=$1',[id])).rowCount,0);
- const stored=(await c.query('SELECT draft FROM workspace_chat_actions WHERE user_id=$1',[id])).rows[0].draft;assert.equal(mail.decryptMail(stored.encrypted).text,body);assert.ok(!JSON.stringify(stored).includes('Dear Abhinav'));
- const queued=await reply(id,preview.choices[0],admin);assert.match(queued.reply,/Email queued/);assert.match(queued.reply,/Queued does not mean delivered/);
- const row=(await c.query('SELECT * FROM mail_outbox WHERE actor_id=$1',[id])).rows[0];assert.equal(mail.decryptMail(row.encrypted_content).text,body);assert.equal(row.recipient,'fixture@example.com');assert.equal(row.status,'queued');assert.equal(row.subject,'Offer Letter – Software Development');
- assert.match((await reply(id,preview.choices[0],admin)).reply,/expired or was replaced/);assert.equal((await c.query('SELECT 1 FROM mail_outbox WHERE actor_id=$1',[id])).rowCount,1);
- assert.match((await reply(id,queued.choices[0],admin)).reply,/Email status: queued/);
- await reply(id,'send an offer letter email to fixture@example.com',admin);await reply(id,'Custom subject',admin);await reply(id,body,admin);
- assert.match((await reply(id,'Edit email message',admin)).reply,/replacement email body/);const edited=await reply(id,'Replacement body',admin);assert.match(edited.reply,/Replacement body/);
- assert.match((await reply(id,'Cancel email',admin)).reply,/Nothing was sent/);
- assert.match((await reply(id,edited.choices[0],admin)).reply,/expired or was replaced/);
- await reply(id,'Send email to fixture@example.com',admin,{subject:'Exact original subject'});
- const literalBody='Create department\n\n**This is the exact email body, not an action.**\n';
- const literalPreview=await reply(id,literalBody,admin);
- const priorToken=literalPreview.choices[0];
- await reply(id,'Edit email recipient',admin);
- assert.match((await reply(id,priorToken,admin)).reply,/expired or was replaced/);
- const recipientEdited=await reply(id,'replacement@example.com',admin);assert.match(recipientEdited.reply,/replacement@example.com/);
- assert.notEqual(recipientEdited.choices[0],priorToken);
- await reply(id,'Edit email subject',admin);
- const incomplete=(await c.query('SELECT draft FROM workspace_chat_actions WHERE user_id=$1',[id])).rows[0].draft;
- assert.match((await reply(id,'Confirm send email '+incomplete.token,admin)).reply,/needs complete details/);
- const subjectEdited=await reply(id,'Replacement subject',admin);assert.match(subjectEdited.reply,/Replacement subject/);
- const preserved=(await c.query('SELECT draft FROM workspace_chat_actions WHERE user_id=$1',[id])).rows[0].draft;
- assert.equal(mail.decryptMail(preserved.encrypted).text,literalBody);
- assert.equal(mail.decryptMail(preserved.encrypted).subject,'Replacement subject');
- await reply(id,'Cancel email',admin);
- console.log('PASS: Admin-only email chat, recipient/subject/body collection, encrypted exact body, preview before send, queue/audit, replay prevention, edit/cancel and truthful status. All fixtures rolled back; no external email sent.');
-}finally{await c.query('ROLLBACK');c.release();await pool.end();}
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import ts from "typescript";
+import pg from "pg";
+const require = createRequire(import.meta.url);
+import { load } from "./helpers/load-ts.mjs";
+process.env.MAIL_ENCRYPTION_KEY ||= "ab".repeat(32);
+process.env.SMTP_USER ||= "fixture@example.invalid";
+process.env.SMTP_PASS ||= "fixture";
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+    c = await pool.connect();
+const permissions = load("lib/workspace-permissions.ts"),
+    templates = load("lib/mail-templates.ts");
+const client = {
+    query: (sql, args) =>
+        /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : c.query(sql, args),
+    release() {},
+};
+const db = { connect: async () => client, query: (sql, args) => c.query(sql, args) };
+const mail = load("lib/mail.ts", {
+    "server-only": {},
+    "./db": { db },
+    "./mail-templates": templates,
+});
+const { workspaceMailChatReply: reply } = load("lib/workspace-mail-chat.ts", {
+    "./db": { db },
+    "./workspace-permissions": permissions,
+    "./mail": mail,
+    "./mail-templates": templates,
+});
+try {
+    await c.query("BEGIN");
+    const id = randomUUID();
+    await c.query(
+        'INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',
+        [id, "Mail chat test", id + "@example.invalid"],
+    );
+    await c.query("UPDATE workspace_members SET role='admin' WHERE user_id=$1", [id]);
+    const admin = { user_id: id, role: "admin", active: true, permissions: [] };
+    assert.match(
+        (
+            await reply(
+                id,
+                "send a mail to fixture@example.com about offer letter, role: Software Development",
+                { ...admin, role: "employee" },
+            )
+        ).reply,
+        /Only an active Admin/,
+    );
+    const start = await reply(
+        id,
+        "send a mail to fixture@example.com about offer letter, role: Software Development",
+        admin,
+    );
+    assert.match(start.reply, /Paste the complete email body/);
+    assert.deepEqual(start.choices, ["Cancel email"]);
+    const body =
+        "Dear Abhinav,\n\n  Software Development offer.\nFurther details we will contact you.\n\nKind regards,\nAIForce.Ops\n";
+    const preview = await reply(id, body, admin);
+    assert.match(preview.reply, /Review email before sending/);
+    assert.ok(preview.choices[0].startsWith("Confirm send email "));
+    assert.equal((await c.query("SELECT 1 FROM mail_outbox WHERE actor_id=$1", [id])).rowCount, 0);
+    const stored = (
+        await c.query("SELECT draft FROM workspace_chat_actions WHERE user_id=$1", [id])
+    ).rows[0].draft;
+    assert.equal(mail.decryptMail(stored.encrypted).text, body);
+    assert.ok(!JSON.stringify(stored).includes("Dear Abhinav"));
+    const queued = await reply(id, preview.choices[0], admin);
+    assert.match(queued.reply, /Email queued/);
+    assert.match(queued.reply, /Queued does not mean delivered/);
+    const row = (await c.query("SELECT * FROM mail_outbox WHERE actor_id=$1", [id])).rows[0];
+    assert.equal(mail.decryptMail(row.encrypted_content).text, body);
+    assert.equal(row.recipient, "fixture@example.com");
+    assert.equal(row.status, "queued");
+    assert.equal(row.subject, "Offer Letter – Software Development");
+    assert.match((await reply(id, preview.choices[0], admin)).reply, /expired or was replaced/);
+    assert.equal((await c.query("SELECT 1 FROM mail_outbox WHERE actor_id=$1", [id])).rowCount, 1);
+    assert.match((await reply(id, queued.choices[0], admin)).reply, /Email status: queued/);
+    await reply(id, "send an offer letter email to fixture@example.com", admin);
+    await reply(id, "Custom subject", admin);
+    await reply(id, body, admin);
+    assert.match((await reply(id, "Edit email message", admin)).reply, /replacement email body/);
+    const edited = await reply(id, "Replacement body", admin);
+    assert.match(edited.reply, /Replacement body/);
+    assert.match((await reply(id, "Cancel email", admin)).reply, /Nothing was sent/);
+    assert.match((await reply(id, edited.choices[0], admin)).reply, /expired or was replaced/);
+    await reply(id, "Send email to fixture@example.com", admin, {
+        subject: "Exact original subject",
+    });
+    const literalBody = "Create department\n\n**This is the exact email body, not an action.**\n";
+    const literalPreview = await reply(id, literalBody, admin);
+    const priorToken = literalPreview.choices[0];
+    await reply(id, "Edit email recipient", admin);
+    assert.match((await reply(id, priorToken, admin)).reply, /expired or was replaced/);
+    const recipientEdited = await reply(id, "replacement@example.com", admin);
+    assert.match(recipientEdited.reply, /replacement@example.com/);
+    assert.notEqual(recipientEdited.choices[0], priorToken);
+    await reply(id, "Edit email subject", admin);
+    const incomplete = (
+        await c.query("SELECT draft FROM workspace_chat_actions WHERE user_id=$1", [id])
+    ).rows[0].draft;
+    assert.match(
+        (await reply(id, "Confirm send email " + incomplete.token, admin)).reply,
+        /needs complete details/,
+    );
+    const subjectEdited = await reply(id, "Replacement subject", admin);
+    assert.match(subjectEdited.reply, /Replacement subject/);
+    const preserved = (
+        await c.query("SELECT draft FROM workspace_chat_actions WHERE user_id=$1", [id])
+    ).rows[0].draft;
+    assert.equal(mail.decryptMail(preserved.encrypted).text, literalBody);
+    assert.equal(mail.decryptMail(preserved.encrypted).subject, "Replacement subject");
+    await reply(id, "Cancel email", admin);
+    console.log(
+        "PASS: Admin-only email chat, recipient/subject/body collection, encrypted exact body, preview before send, queue/audit, replay prevention, edit/cancel and truthful status. All fixtures rolled back; no external email sent.",
+    );
+} finally {
+    await c.query("ROLLBACK");
+    c.release();
+    await pool.end();
+}

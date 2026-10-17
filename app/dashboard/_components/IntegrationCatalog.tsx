@@ -1,124 +1,1421 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
-import { CheckCircle2, ChevronRight, ExternalLink, LoaderCircle, Plug, RefreshCw, Search, ShieldCheck, X, Plus, Trash2, Undo2, Share2 } from "lucide-react";
+import {
+    CheckCircle2,
+    ChevronRight,
+    ExternalLink,
+    LoaderCircle,
+    Plug,
+    RefreshCw,
+    Search,
+    ShieldCheck,
+    X,
+    Plus,
+    Trash2,
+    Undo2,
+    Share2,
+} from "lucide-react";
 import ThemedSelect from "@/components/themed-select";
-import { integrationCatalog as builtinCatalog, type Provider, type Operation } from "@/lib/integrations/catalog";
+import {
+    integrationCatalog as builtinCatalog,
+    type Provider,
+    type Operation,
+} from "@/lib/integrations/catalog";
 import { demoAgentTemplates } from "@/lib/integrations/templates";
 
-type Saved = {provider:string;config:Record<string,string>;enabled:boolean;revision:number;checked_at:string|null;check_state:string;check_message:string;has_secret:boolean;credential_fields?:string[]};
-type Snapshot = {canGrantCreation:boolean;shareableProviders:{provider:string;roles:string[]}[];deletableProviders:string[];canShare:boolean;canCreate:boolean;shares:{provider:string;shared_roles:string[]}[];catalog:Provider[];removed:{id:string;name:string}[];connections:Saved[];existing:{id:string;name:string;kind:string}[];history:{id:string;provider:string;operation:string;status:string;summary:string;created_at:string}[];monitors:{provider:string;enabled:boolean;interval_seconds:number;last_status:string;last_checked_at:string|null}[]};
-type Preview = {token:string;provider:string;operation:string;method:string;inputs:unknown;destination?:unknown};
-const control="h-10 w-full rounded-xl border border-[#dfe2ee] bg-white px-3 text-xs text-slate-700 outline-none focus:border-[#a9a2f2] focus:ring-2 focus:ring-[#6255e8]/10";
-const primary="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#6255e8] px-4 text-xs font-semibold text-white hover:bg-[#5146d2] disabled:opacity-50";
-const secondary="inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#e2e4ee] bg-white px-4 text-xs font-semibold text-slate-600 hover:bg-[#faf9ff] disabled:opacity-50";
-async function api(body?:unknown,signal?:AbortSignal) {
-  const response=await fetch("/api/tools/integrations",body?{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(body),signal}:{cache:"no-store",signal});
-  const data=await response.json();if(!response.ok)throw Object.assign(new Error(data.error || "Could not complete this request."),{status:response.status});return data;
+type Saved = {
+    provider: string;
+    config: Record<string, string>;
+    enabled: boolean;
+    revision: number;
+    checked_at: string | null;
+    check_state: string;
+    check_message: string;
+    has_secret: boolean;
+    credential_fields?: string[];
+};
+type Snapshot = {
+    canGrantCreation: boolean;
+    shareableProviders: { provider: string; roles: string[] }[];
+    deletableProviders: string[];
+    canShare: boolean;
+    canCreate: boolean;
+    shares: { provider: string; shared_roles: string[] }[];
+    catalog: Provider[];
+    removed: { id: string; name: string }[];
+    connections: Saved[];
+    existing: { id: string; name: string; kind: string }[];
+    history: {
+        id: string;
+        provider: string;
+        operation: string;
+        status: string;
+        summary: string;
+        created_at: string;
+    }[];
+    monitors: {
+        provider: string;
+        enabled: boolean;
+        interval_seconds: number;
+        last_status: string;
+        last_checked_at: string | null;
+    }[];
+};
+type Preview = {
+    token: string;
+    provider: string;
+    operation: string;
+    method: string;
+    inputs: unknown;
+    destination?: unknown;
+};
+const control =
+    "h-10 w-full rounded-xl border border-[#dfe2ee] bg-white px-3 text-xs text-slate-700 outline-none focus:border-[#a9a2f2] focus:ring-2 focus:ring-[#6255e8]/10";
+const primary =
+    "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[#6255e8] px-4 text-xs font-semibold text-white hover:bg-[#5146d2] disabled:opacity-50";
+const secondary =
+    "inline-flex min-h-10 items-center justify-center gap-2 rounded-xl border border-[#e2e4ee] bg-white px-4 text-xs font-semibold text-slate-600 hover:bg-[#faf9ff] disabled:opacity-50";
+async function api(body?: unknown, signal?: AbortSignal) {
+    const response = await fetch(
+        "/api/tools/integrations",
+        body
+            ? {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify(body),
+                  signal,
+              }
+            : { cache: "no-store", signal },
+    );
+    const data = await response.json();
+    if (!response.ok)
+        throw Object.assign(new Error(data.error || "Could not complete this request."), {
+            status: response.status,
+        });
+    return data;
 }
 export default function IntegrationCatalog() {
-  const [data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(""),[message,setMessage]=useState(""),[query,setQuery]=useState(""),[category,setCategory]=useState("All categories"),[selected,setSelected]=useState<Provider|null>(null),[values,setValues]=useState<Record<string,string>>({}),[enabled,setEnabled]=useState(false),[busy,setBusy]=useState(""),[operation,setOperation]=useState(""),[inputs,setInputs]=useState("{}"),[result,setResult]=useState<unknown>(null),[preview,setPreview]=useState<Preview|null>(null),[tab,setTab]=useState("connections");
-  const integrationCatalog=data?.catalog??[];
-  const [shareTarget,setShareTarget]=useState<{id:string;name:string}|null>(null),[shareRoles,setShareRoles]=useState<string[]>([]);
-  const shareRoleOptions=shareTarget?.id==="*"?["manager","employee","user"]:data?.shareableProviders.find(p=>p.provider===shareTarget?.id)?.roles??[];
-  const shareDialog=useRef<HTMLDialogElement>(null);
-  useEffect(()=>{if(shareTarget)shareDialog.current?.showModal();else shareDialog.current?.close();},[shareTarget]);
-  function openSharing(id:string,name:string){setError("");setShareRoles(data?.shares.find(s=>s.provider===id)?.shared_roles??[]);setShareTarget({id,name});}
-  async function saveSharing(){if(!shareTarget)return;setBusy("share");setError("");try{await api({action:"share",provider:shareTarget.id,roles:shareRoles});await load();setShareTarget(null);setMessage("Sharing permissions saved.");}catch(e){setError(e instanceof Error?e.message:"Could not save sharing.");}finally{setBusy("");}}
-  const dialog=useRef<HTMLDialogElement>(null), saved=data?.connections.find(c=>c.provider===selected?.id);
-  const [restricted,setRestricted]=useState(false);
-  const [dirty,setDirty]=useState(false);
-  const updateValues=(next:Record<string,string>|((previous:Record<string,string>)=>Record<string,string>))=>{setValues(next);setDirty(true);setPreview(null);};
-  const [monitorEnabled,setMonitorEnabled]=useState(false),[monitorInterval,setMonitorInterval]=useState("300");
-  const [createOpen,setCreateOpen]=useState(false),[removing,setRemoving]=useState<Provider|null>(null),[newProvider,setNewProvider]=useState({name:"",description:"",category:"Custom",auth:"bearer",templateId:""});
-  const createDialog=useRef<HTMLDialogElement>(null),removeDialog=useRef<HTMLDialogElement>(null);
-  useEffect(()=>{if(createOpen)createDialog.current?.showModal();else createDialog.current?.close();},[createOpen]);
-  useEffect(()=>{if(removing)removeDialog.current?.showModal();else removeDialog.current?.close();},[removing]);
-  async function load(signal?:AbortSignal) {setData(await api(undefined,signal));window.dispatchEvent(new Event("integration-catalog-changed"));}
-  useEffect(()=>{const c=new AbortController();api(undefined,c.signal).then(result=>{if(!c.signal.aborted)setData(result);}).catch(e=>{if(!c.signal.aborted){if(e.status===403)setRestricted(true);else setError(e.message);}});return()=>c.abort();},[]);
-  useEffect(()=>{if(selected){dialog.current?.showModal();}else dialog.current?.close();},[selected]);
-  function operations(p:Provider):Operation[] {
-    if(!p.custom)return p.operations;
-    try {const rows=JSON.parse(values.mapping||"[]");return Array.isArray(rows)?rows.filter(r=>r&&typeof r.id==="string"&&typeof r.method==="string").map(r=>({...r,write:r.method.toUpperCase()!=="GET"})):[];}catch{return [];}
-  }
-  function open(p:Provider) {
-    const row=data?.connections.find(c=>c.provider===p.id);
-    const config={...(row?.config||{})};
-    if(p.custom&&!config.mapping)config.mapping=JSON.stringify([{id:"list",label:"List records",method:"GET",path:"/replace-with-documented-path",example:{}}],null,2);
-    setDirty(false);setSelected(p);setValues(config);setEnabled(row?.enabled||false);setError("");setMessage("");setResult(null);setPreview(null);
-    const monitor=data?.monitors.find(m=>m.provider===p.id);setMonitorEnabled(monitor?.enabled||false);setMonitorInterval(String(monitor?.interval_seconds||300));
-    let available=p.operations;if(p.custom){try{available=JSON.parse(config.mapping||"[]");}catch{available=[];}}
-    const first=available[0];setOperation(first?.id||"");setInputs(JSON.stringify(first?.example||{},null,2));
-  }
-  async function act(action:string) {
-    if(!selected)return;setBusy(action);setError("");setMessage("");
-    try {
-      let r;
-      if(action==="save") {r=await api({action,provider:selected.id,config:values,enabled});setDirty(false);setMessage(r.message);setValues(v=>Object.fromEntries(Object.entries(v).filter(([key])=>!selected.fields.find(f=>f.key===key)?.secret)));setPreview(null);const available=operations(selected);if(!available.some(o=>o.id===operation)){setOperation(available[0]?.id||"");setInputs(JSON.stringify(available[0]?.example||{},null,2));}}
-      else if(action==="disconnect") {await api({action,provider:selected.id});setSelected(null);}
-      else if(action==="approve") {r=await api({action,token:preview?.token});setPreview(null);setResult(r);setMessage("Source response received. Review its result for completion or delivery status.");}
-      else if(action==="monitor") {await api({action,provider:selected.id,operation,inputs:JSON.parse(inputs),interval:Number(monitorInterval),enabled:monitorEnabled});setMessage("Read monitor settings saved. The integration worker performs polling while the app worker is running.");}
-      else if(action==="monitor_snapshot") {setResult(await api({action,provider:selected.id}));}
-      else {
-        const parsed=JSON.parse(inputs);if(!parsed||typeof parsed!=="object"||Array.isArray(parsed))throw new Error("Inputs must be a JSON object.");
-        r=await api({action,provider:selected.id,operation,inputs:parsed});
-        if(r.status==="awaiting_approval")setPreview(r);else {setResult(r);setPreview(null);}
-      }
-      await load();
-    }catch(e){setError(e instanceof Error?e.message:"Request failed.");}finally{setBusy("");}
-  }
-  async function install(key:string) {
-    setBusy(key);setError("");setMessage("");
-    try {const response=await fetch("/api/agents/integration-templates",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({template:key})});const r=await response.json();if(!response.ok)throw new Error(r.error);setMessage(key==="all"?`${r.created} templates installed; ${r.preserved} existing agents preserved.`:`${r.name} ${r.created?"created with connected tool references":"already exists and was preserved"}. Open Agents to configure its instructions and knowledge.`);}catch(e){setError(e instanceof Error?e.message:"Could not install template.");}finally{setBusy("");}
-  }
-  async function createProvider() {
-    setBusy("create_provider");setError("");
-    try{const result=await api({action:"create_provider",...newProvider});await load();setCreateOpen(false);setNewProvider({name:"",description:"",category:"Custom",auth:"bearer",templateId:""});setCategory("All categories");setQuery("");open(result.provider);}
-    catch(e){setError(e instanceof Error?e.message:"Could not create integration.");}finally{setBusy("");}
-  }
-  async function removeProvider(id:string,restore=false) {
-    setBusy("archive_provider");setError("");
-    try{await api({action:restore?"restore_provider":"archive_provider",provider:id});await load();setRemoving(null);setMessage(restore?"Integration restored in a disabled state. Review its configuration before enabling it.":"Integration removed. Existing agent references will report it unavailable. You can restore it below.");}
-    catch(e){setError(e instanceof Error?e.message:"Could not update integration.");}finally{setBusy("");}
-  }
-  const categories=["All categories",...new Set(integrationCatalog.map(p=>p.category))];
-  const visible=integrationCatalog.filter(p=>(category==="All categories"||p.category===category)&&`${p.name} ${p.description}`.toLowerCase().includes(query.toLowerCase()));
-  if(restricted)return null;
-  return <section className="mb-7 rounded-2xl border border-[#e5e2f5] bg-[#fcfbff] p-5 sm:p-6">
-    <div className="flex flex-wrap items-start justify-between gap-4"><div><div className="flex items-center gap-2 text-[#6255e8]"><Plug className="size-5"/><h2 className="text-base font-semibold text-slate-800">Integration catalog</h2></div><p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">Configure once, then connect tools to your agents. Credentials stay encrypted on the server. Your existing agents remain unchanged.</p></div><div className="flex flex-wrap gap-2">{data?.canGrantCreation&&<button aria-label="Share integration creation access" title="Share integration creation access" className={secondary} onClick={()=>openSharing("*","Add integrations")}><Share2 className="size-4"/>Share access</button>}{data?.canCreate&&<button className={primary} onClick={()=>setCreateOpen(true)}><Plus className="size-4"/>Add integration</button>}<button className={secondary} onClick={()=>{setError("");void load().catch(e=>setError(e.message));}}><RefreshCw className="size-3.5"/>Refresh</button></div></div>
-    <div className="my-5 flex flex-wrap gap-2" role="tablist" aria-label="Integration views">{[["connections","Connections"],...(data?.canGrantCreation?[["agents","Agent templates"]]:[]),["activity","Activity"]].map(([id,label])=><button key={id} role="tab" aria-selected={tab===id} onClick={()=>setTab(id)} className={`rounded-xl px-4 py-2 text-xs font-semibold ${tab===id?"bg-[#ece8ff] text-[#6255e8]":"text-slate-500 hover:bg-white"}`}>{label}</button>)}</div>
-    {error&&!selected&&<p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}{message&&!selected&&<p role="status" className="mb-4 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">{message}</p>}
-    {tab==="connections"&&<><div className="mb-4 grid gap-3 sm:grid-cols-[1fr_220px]"><label className="relative"><Search className="absolute left-3 top-3 size-4 text-slate-400"/><input aria-label="Search integrations" className={`${control} pl-9`} placeholder="Search integrations…" value={query} onChange={e=>setQuery(e.target.value)}/></label><ThemedSelect portalContainer={selected?dialog:undefined} aria-label="Filter integration category" className={control} value={category} onChange={e=>setCategory(e.target.value)}>{categories.map(c=><option key={c}>{c}</option>)}</ThemedSelect></div>
-    {!data&&!error&&<p className="py-5 text-xs text-slate-500">Loading saved connection states…</p>}
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{visible.map(p=>{const s=data?.connections.find(c=>c.provider===p.id);const status=!s?.enabled?"Not configured":"Configured";return <article key={p.id} className="flex flex-col rounded-2xl border border-[#e8e7ef] bg-white p-4"><div className="flex flex-wrap items-start justify-between gap-2"><span className="text-[10px] font-semibold uppercase tracking-wide text-[#8a80bc]">{p.category}</span>{data?.shareableProviders.some(s=>s.provider===p.id)&&<button aria-label={`Share integration ${p.name}`} title="Share integration" onClick={()=>openSharing(p.id,p.name)} className="ml-auto rounded-lg p-1 text-[#6255e8] hover:bg-violet-50"><Share2 className="size-3.5"/></button>}{data?.deletableProviders.includes(p.id)&&<button aria-label={`Delete integration ${p.name}`} title="Delete integration" onClick={()=>setRemoving(p)} className="ml-auto rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"><Trash2 className="size-3.5"/></button>}<span className={`rounded-full px-2 py-1 text-[10px] ${status==="Configured"?"bg-emerald-50 text-emerald-700":"bg-slate-100 text-slate-500"}`}>{status}</span></div><h3 className="mt-3 text-sm font-semibold text-slate-800">{p.name}</h3>{data&&!data.deletableProviders.includes(p.id)&&<span className="mt-2 text-[10px] font-medium text-[#6255e8]">Shared integration</span>}{s?.enabled&&s.check_state==="failed"&&<p className="mt-2 text-[10px] text-amber-700">Connection check failed · review setup</p>}{s?.enabled&&s.check_state==="reachable"&&<p className="mt-2 text-[10px] text-emerald-700">Selected read check passed</p>}<p className="mt-2 grow text-xs leading-5 text-slate-500">{p.description}</p><div className="mt-4 flex items-center justify-between"><span className="text-[10px] text-slate-400">{p.custom?"API mapping required":`${p.operations.length} operations`}</span><button disabled={!data} onClick={()=>open(p)} className="inline-flex items-center gap-1 text-xs font-semibold text-[#6255e8] disabled:opacity-50">{s?"Configure":"Set up"}<ChevronRight className="size-4"/></button></div></article>;})}</div>{!visible.length&&<p className="p-6 text-center text-xs text-slate-500">{data&&!query?"Your Admin has not shared any integrations with your role yet.":"No matching integrations."}</p>}</>}
-    {tab==="agents"&&<><button className={`${primary} mb-4`} disabled={!!busy} onClick={()=>void install("all")}>{busy==="all"?<LoaderCircle className="size-4 animate-spin"/>:<CheckCircle2 className="size-4"/>}Install all missing templates</button><p className="mb-4 text-xs leading-5 text-slate-500">Install individual templates without replacing an existing agent with the same name. Missing accounts remain explicitly disconnected. Demo test names have no recoverable behaviour and are not presented as functional templates.</p><div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">{demoAgentTemplates.map(t=><article key={t.id} className="rounded-2xl border border-[#e8e7ef] bg-white p-4"><h3 className="text-sm font-semibold text-slate-800">{t.name}</h3><p className="mt-2 text-xs leading-5 text-slate-500">{t.purpose}</p><p className="mt-3 text-[10px] text-[#8073bf]">{t.providers.map(p=>integrationCatalog.find(c=>c.id===p)?.name).join(" · ")||"Indexed API documentation"}</p><button disabled={!!busy} onClick={()=>void install(t.id)} className={`${secondary} mt-4`}>{busy===t.id?<LoaderCircle className="size-3.5 animate-spin"/>:<CheckCircle2 className="size-3.5"/>}Install template</button></article>)}</div></>}
-    {tab==="activity"&&<div className="overflow-x-auto rounded-xl border border-[#e8e7ef] bg-white"><table className="w-full text-left text-xs"><thead className="bg-[#f7f5fd] text-slate-500"><tr>{["Time","Integration","Operation","Status","Details"].map(h=><th key={h} className="p-3 font-medium">{h}</th>)}</tr></thead><tbody>{data?.history.map(h=><tr key={h.id} className="border-t border-slate-100"><td className="whitespace-nowrap p-3 text-slate-500">{new Date(h.created_at).toLocaleString()}</td><td className="p-3">{integrationCatalog.find(p=>p.id===h.provider)?.name}</td><td className="p-3">{h.operation}</td><td className="p-3">{h.status}</td><td className="p-3 text-slate-500">{h.summary}</td></tr>)}</tbody></table>{!data?.history.length&&<p className="p-6 text-center text-xs text-slate-500">No integration operations recorded yet.</p>}</div>}
-    {!!data?.removed.length&&<details className="mt-5 rounded-xl border border-[#e8e7ef] bg-white p-3 text-xs text-slate-500"><summary className="cursor-pointer font-medium">Removed integrations ({data.removed.length})</summary><div className="mt-3 space-y-2">{data.removed.map(p=><div key={p.id} className="flex items-center justify-between gap-3"><span>{p.name}</span><button disabled={!!busy} onClick={()=>void removeProvider(p.id,true)} className="inline-flex items-center gap-1 font-semibold text-[#6255e8]"><Undo2 className="size-3"/>Restore</button></div>)}</div></details>}
-    <dialog ref={createDialog} onCancel={()=>setCreateOpen(false)} onClose={()=>setCreateOpen(false)} aria-label="Add integration" className="fixed inset-0 m-auto max-h-[90dvh] w-[min(560px,94vw)] overflow-y-auto rounded-2xl border border-[#e5e2f0] bg-white p-6 text-slate-700 shadow-2xl backdrop:bg-slate-900/35"><form onSubmit={e=>{e.preventDefault();void createProvider();}}><div className="flex items-center justify-between"><h2 className="text-lg font-semibold">Add integration</h2><button type="button" aria-label="Close add integration" onClick={()=>setCreateOpen(false)} className="p-2"><X className="size-4"/></button></div><p className="mt-2 text-xs leading-5 text-slate-500">Create a reusable API connection. It starts as Not configured; enter its URL, authentication and operation mappings in Set up.</p>{error&&<p role="alert" className="mt-3 text-xs text-rose-600">{error}</p>}<div className="mt-5 space-y-4"><label className="block text-xs">Integration type<ThemedSelect portalContainer={createDialog} className={`${control} mt-2`} value={newProvider.templateId} onChange={e=>{const p=builtinCatalog.find(p=>p.id===e.target.value);setNewProvider({...newProvider,templateId:e.target.value,auth:p?.auth||"bearer",...(p?{name:p.name,description:p.description,category:p.category}:{})});}}><option value="">Custom HTTP API</option>{builtinCatalog.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</ThemedSelect></label><label className="block text-xs">Integration name<input required maxLength={100} autoComplete="off" className={`${control} mt-2`} value={newProvider.name} onChange={e=>setNewProvider({...newProvider,name:e.target.value})}/></label><label className="block text-xs">Purpose<textarea maxLength={2000} className="mt-2 min-h-24 w-full rounded-xl border border-[#dfe2ee] p-3 text-xs" value={newProvider.description} onChange={e=>setNewProvider({...newProvider,description:e.target.value})}/></label><label className="block text-xs">Category<ThemedSelect portalContainer={createDialog} className={`${control} mt-2`} value={newProvider.category} onChange={e=>setNewProvider({...newProvider,category:e.target.value})}>{[...new Set([...categories.filter(c=>c!=="All categories"),"Custom"])].map(c=><option key={c}>{c}</option>)}</ThemedSelect></label>{!newProvider.templateId&&<label className="block text-xs">Authentication<ThemedSelect portalContainer={createDialog} className={`${control} mt-2`} value={newProvider.auth} onChange={e=>setNewProvider({...newProvider,auth:e.target.value})}><option value="bearer">API key / bearer token</option><option value="basic">Username and password / token</option><option value="oauth2">OAuth 2.0 client credentials</option><option value="none">No authentication</option></ThemedSelect></label>}<button disabled={!!busy} className={primary}>{busy==="create_provider"?<LoaderCircle className="size-4 animate-spin"/>:<Plus className="size-4"/>}Create integration</button></div></form></dialog>
-    <dialog ref={removeDialog} onCancel={()=>setRemoving(null)} onClose={()=>setRemoving(null)} aria-label="Delete integration" className="fixed inset-0 m-auto w-[min(480px,94vw)] rounded-2xl border border-[#e5e2f0] bg-white p-6 shadow-2xl backdrop:bg-slate-900/35"><h2 className="text-lg font-semibold text-slate-800">Delete {removing?.name}?</h2><p className="mt-3 text-xs leading-5 text-slate-500">This disables the connection, removes its card and invalidates pending action approvals. Existing agents are preserved and will report this integration unavailable. You can restore the card later.</p>{error&&<p role="alert" className="mt-3 text-xs text-rose-600">{error}</p>}<div className="mt-5 flex gap-3"><button disabled={!!busy} onClick={()=>removing&&void removeProvider(removing.id)} className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-semibold text-white">Delete integration</button><button disabled={!!busy} onClick={()=>setRemoving(null)} className={secondary}>Cancel</button></div></dialog>
-    <dialog ref={shareDialog} onCancel={()=>{if(!busy)setShareTarget(null);}} onClose={()=>setShareTarget(null)} className="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border border-[#e5e2f5] bg-white p-6 text-slate-700 shadow-xl backdrop:bg-slate-900/30" aria-labelledby="integration-share-title">
-      <div className="flex items-center justify-between gap-3"><h2 id="integration-share-title" className="text-lg font-semibold">{shareTarget?.id==="*"?"Who can add integrations?":"Share integration"}</h2><button type="button" disabled={!!busy} aria-label="Close sharing" onClick={()=>setShareTarget(null)} className="rounded-lg p-2 hover:bg-slate-50"><X className="size-5"/></button></div>
-      <p className="mt-3 text-sm font-medium">{shareTarget?.name}</p><p className="mt-2 text-xs leading-5 text-slate-500">{shareTarget?.id==="*"?"Selected roles can create their own integrations. Existing catalog integrations are shared separately using the share icon on each card.":"Selected roles can set up this integration using their own credentials."} Credentials and saved connection details stay private.</p>{shareTarget?.id!=="*"&&!shareRoleOptions.includes("admin")&&<p className="mt-2 text-xs text-slate-500">Admin-owned tools cannot be shared back to Admins.</p>}
-      <fieldset disabled={!!busy} className="mt-5 space-y-3"><legend className="sr-only">Share with roles</legend><label className="flex items-center gap-3 border-b border-slate-100 pb-3 text-sm font-semibold"><input type="checkbox" className="size-4 accent-[#6255e8]" checked={shareRoleOptions.length>0&&shareRoleOptions.every(role=>shareRoles.includes(role))} onChange={e=>setShareRoles(e.target.checked?[...shareRoleOptions]:[])}/>Everyone</label>{shareRoleOptions.map(role=><label key={role} className="flex items-center gap-3 text-sm"><input type="checkbox" className="size-4 accent-[#6255e8]" checked={shareRoles.includes(role)} onChange={e=>setShareRoles(v=>e.target.checked?[...v,role]:v.filter(r=>r!==role))}/>{role[0].toUpperCase()+role.slice(1)}</label>)}</fieldset>
-      {error&&<p role="alert" className="mt-4 text-xs text-rose-600">{error}</p>}<div className="mt-6 flex justify-end gap-3"><button disabled={!!busy} className={secondary} onClick={()=>setShareTarget(null)}>Cancel</button><button disabled={!!busy} className={primary} onClick={()=>void saveSharing()}>{busy==="share"&&<LoaderCircle className="size-4 animate-spin"/>}Save sharing</button></div>
-    </dialog>
-    <dialog ref={dialog} onCancel={e=>{if(busy)e.preventDefault();else setSelected(null);}} onClose={()=>setSelected(null)} className="fixed inset-0 m-auto max-h-[90dvh] w-[min(940px,94vw)] overflow-y-auto rounded-2xl border border-[#e5e2f0] bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-900/35" aria-label={`${selected?.name||"Integration"} setup`}>
-      {selected&&<><header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#eeeaf8] bg-white p-5"><div><p className="text-[10px] font-semibold uppercase tracking-widest text-[#8073bf]">{selected.category}</p><h2 className="mt-1 text-lg font-semibold text-slate-800">{selected.name}</h2></div><button disabled={!!busy} aria-label="Close integration setup" className="rounded-lg p-2 hover:bg-slate-50" onClick={()=>setSelected(null)}><X className="size-5"/></button></header>
-      <div className="p-5 sm:p-6"><p className="text-xs leading-5 text-slate-500">{selected.description}</p>{selected.docs&&<a href={selected.docs} target="_blank" rel="noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-[#6255e8]">Provider documentation<ExternalLink className="size-3"/></a>}
-      {error&&<p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}{message&&<p role="status" className="mt-4 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">{message}</p>}
-      <form onChange={()=>{setDirty(true);setPreview(null);}} onSubmit={e=>{e.preventDefault();void act("save");}} className="mt-5 space-y-4">
-        {selected.reuse&&<label className="block text-xs font-medium">Connection source<ThemedSelect portalContainer={selected?dialog:undefined} value={values.reuseId||""} onChange={e=>updateValues(v=>({...v,reuseId:e.target.value}))} className={`${control} mt-2`}><option value="">Enter connection details</option>{data?.existing.filter(c=>c.kind===selected.reuse).map(c=><option key={c.id} value={c.id}>Use existing: {c.name}</option>)}</ThemedSelect></label>}
-        {!values.reuseId&&<div className="grid gap-4 sm:grid-cols-2">{selected.fields.map(f=><label key={f.key} className={`block text-xs font-medium ${f.key==="mapping"?"sm:col-span-2":""}`}>{f.label}{f.optional&&<span className="font-normal text-slate-400"> · optional</span>}{f.key==="mapping"?<><textarea className="mt-2 min-h-44 w-full rounded-xl border border-[#dfe2ee] bg-[#fafbff] p-3 font-mono text-xs leading-5 outline-none focus:border-[#a9a2f2]" value={values[f.key]||""} onChange={e=>{updateValues({...values,[f.key]:e.target.value});setPreview(null);}}/><span className="mt-1 block text-[10px] font-normal leading-4 text-slate-400">Replace the example with documented relative paths. Non-GET mappings always require approval. Never include secrets in mappings.</span></>:<input className={`${control} mt-2`} type={f.secret?"password":"text"} autoComplete={f.secret?"new-password":"off"} name={`integration-${selected.id}-${f.key}`} spellCheck={false} data-lpignore="true" data-1p-ignore="true" required={enabled&&!f.optional&&!(f.secret&&saved?.credential_fields?.includes(f.key))} placeholder={f.secret&&saved?.credential_fields?.includes(f.key)?"Saved securely · leave blank to keep":f.key==="baseUrl"?"https://your-instance.example.com":""} value={values[f.key]||""} onChange={e=>{updateValues({...values,[f.key]:e.target.value});setPreview(null);}}/>}</label>)}</div>}
-        {selected.custom&&["bearer","mapped"].includes(selected.auth)&&<div className="grid gap-3 sm:grid-cols-2"><label className="text-xs">Authentication header<input className={`${control} mt-2`} value={values.authHeader||"Authorization"} onChange={e=>updateValues({...values,authHeader:e.target.value})}/></label><label className="text-xs">Token format<ThemedSelect portalContainer={selected?dialog:undefined} className={`${control} mt-2`} value={values.authPrefix===undefined?"Bearer ":values.authPrefix} onChange={e=>updateValues({...values,authPrefix:e.target.value})}><option value="Bearer ">Bearer token</option><option value="">Raw API key</option></ThemedSelect></label></div>}
-        <label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={enabled} onChange={e=>setEnabled(e.target.checked)}/>Enable this connection</label>
-        <div className="flex flex-wrap items-center gap-3"><button disabled={!!busy} className={primary}>{busy==="save"&&<LoaderCircle className="size-4 animate-spin"/>}Save configuration</button><span className="inline-flex items-center gap-1 text-[10px] text-slate-400"><ShieldCheck className="size-3.5"/>Secrets are never returned to the browser</span>{saved&&<button type="button" disabled={!!busy} className="ml-auto text-xs text-rose-600" onClick={()=>void act("disconnect")}>Disconnect & remove credentials</button>}</div>
-      </form>
-      <section className="mt-6 border-t border-[#eeeaf8] pt-5"><h3 className="text-sm font-semibold">Operations</h3><p className="mt-1 text-xs leading-5 text-slate-500">Save changes before running. Unsaved connection changes disable execution. A connection check runs your selected read operation; it does not verify all permissions.</p>{saved?.checked_at&&<p className="mt-2 text-[10px] text-slate-400">Last check: {new Date(saved.checked_at).toLocaleString()} · {saved.check_message}</p>}
-      <label className="mt-4 block text-xs">Operation<ThemedSelect portalContainer={selected?dialog:undefined} className={`${control} mt-2`} value={operation} onChange={e=>{setOperation(e.target.value);setInputs(JSON.stringify(operations(selected).find(o=>o.id===e.target.value)?.example||{},null,2));setPreview(null);setResult(null);}}>{operations(selected).map(o=><option key={o.id} value={o.id}>{o.label}{o.write?" · approval required":" · read"}</option>)}</ThemedSelect></label>
-      <label className="mt-4 block text-xs">Operation inputs (JSON)<textarea value={inputs} onChange={e=>{setInputs(e.target.value);setPreview(null);}} className="mt-2 min-h-32 w-full rounded-xl border border-[#dfe2ee] bg-[#fafbff] p-3 font-mono text-xs leading-5"/></label>
-      <div className="mt-3 flex flex-wrap gap-2"><button disabled={!!busy||dirty||!saved?.enabled||!operation} className={primary} onClick={()=>void act("run")}>{busy==="run"?<LoaderCircle className="size-4 animate-spin"/>:<Plug className="size-4"/>}{operations(selected).find(o=>o.id===operation)?.write?"Prepare action preview":"Run read operation"}</button><button disabled={!!busy||dirty||!saved?.enabled||!operation||!!operations(selected).find(o=>o.id===operation)?.write} className={secondary} onClick={()=>void act("check")}>Check connection</button></div>
-      <div className="mt-5 rounded-xl border border-[#e5e2f5] p-4"><h4 className="text-xs font-semibold">Background read monitor</h4><p className="mt-1 text-[11px] leading-5 text-slate-500">Poll this selected read operation using the existing integration worker. Saves the latest encrypted result with its check time. No automatic external changes or emails are triggered.</p><div className="mt-3 flex flex-wrap items-center gap-3"><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={monitorEnabled} onChange={e=>setMonitorEnabled(e.target.checked)}/>Enable polling</label><ThemedSelect portalContainer={selected?dialog:undefined} aria-label="Monitor interval" className={`${control} max-w-40`} value={monitorInterval} onChange={e=>setMonitorInterval(e.target.value)}><option value="60">Every minute</option><option value="300">Every 5 minutes</option><option value="900">Every 15 minutes</option><option value="3600">Every hour</option><option value="86400">Every day</option></ThemedSelect><button disabled={!!busy||dirty||!saved?.enabled||!operation||!!operations(selected).find(o=>o.id===operation)?.write} className={secondary} onClick={()=>void act("monitor")}>Save monitor</button><button disabled={!!busy||!saved} className="text-xs font-semibold text-[#6255e8]" onClick={()=>void act("monitor_snapshot")}>Latest recorded result</button></div>{data?.monitors.find(m=>m.provider===selected.id)?.last_checked_at&&<p className="mt-3 text-[10px] text-slate-400">Last poll: {new Date(data.monitors.find(m=>m.provider===selected.id)!.last_checked_at!).toLocaleString()} · {data.monitors.find(m=>m.provider===selected.id)?.last_status}</p>}</div>
-      {preview&&<div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4"><h4 className="text-sm font-semibold text-amber-900">Review external action</h4><p className="mt-1 text-xs text-amber-800">{preview.method} · {preview.operation} · expires in 10 minutes. Nothing has been sent.</p><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify({destination:preview.destination,inputs:preview.inputs},null,2)}</pre><div className="mt-3 flex gap-2"><button disabled={!!busy} className={primary} onClick={()=>void act("approve")}>Approve exact action</button><button disabled={!!busy} className={secondary} onClick={()=>setPreview(null)}>Cancel</button></div></div>}
-      {result!==null&&<div className="mt-4 rounded-xl border border-[#e5e2f5] bg-[#faf9ff] p-4"><h4 className="text-xs font-semibold">Source result</h4><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5">{JSON.stringify(result,null,2)}</pre></div>}</section></div></>}
-    </dialog>
-  </section>;
+    const [data, setData] = useState<Snapshot | null>(null),
+        [error, setError] = useState(""),
+        [message, setMessage] = useState(""),
+        [query, setQuery] = useState(""),
+        [category, setCategory] = useState("All categories"),
+        [selected, setSelected] = useState<Provider | null>(null),
+        [values, setValues] = useState<Record<string, string>>({}),
+        [enabled, setEnabled] = useState(false),
+        [busy, setBusy] = useState(""),
+        [operation, setOperation] = useState(""),
+        [inputs, setInputs] = useState("{}"),
+        [result, setResult] = useState<unknown>(null),
+        [preview, setPreview] = useState<Preview | null>(null),
+        [tab, setTab] = useState("connections");
+    const integrationCatalog = data?.catalog ?? [];
+    const [shareTarget, setShareTarget] = useState<{ id: string; name: string } | null>(null),
+        [shareRoles, setShareRoles] = useState<string[]>([]);
+    const shareRoleOptions =
+        shareTarget?.id === "*"
+            ? ["manager", "employee", "user"]
+            : (data?.shareableProviders.find((p) => p.provider === shareTarget?.id)?.roles ?? []);
+    const shareDialog = useRef<HTMLDialogElement>(null);
+    useEffect(() => {
+        if (shareTarget) shareDialog.current?.showModal();
+        else shareDialog.current?.close();
+    }, [shareTarget]);
+    function openSharing(id: string, name: string) {
+        setError("");
+        setShareRoles(data?.shares.find((s) => s.provider === id)?.shared_roles ?? []);
+        setShareTarget({ id, name });
+    }
+    async function saveSharing() {
+        if (!shareTarget) return;
+        setBusy("share");
+        setError("");
+        try {
+            await api({ action: "share", provider: shareTarget.id, roles: shareRoles });
+            await load();
+            setShareTarget(null);
+            setMessage("Sharing permissions saved.");
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Could not save sharing.");
+        } finally {
+            setBusy("");
+        }
+    }
+    const dialog = useRef<HTMLDialogElement>(null),
+        saved = data?.connections.find((c) => c.provider === selected?.id);
+    const [restricted, setRestricted] = useState(false);
+    const [dirty, setDirty] = useState(false);
+    const updateValues = (
+        next:
+            Record<string, string> | ((previous: Record<string, string>) => Record<string, string>),
+    ) => {
+        setValues(next);
+        setDirty(true);
+        setPreview(null);
+    };
+    const [monitorEnabled, setMonitorEnabled] = useState(false),
+        [monitorInterval, setMonitorInterval] = useState("300");
+    const [createOpen, setCreateOpen] = useState(false),
+        [removing, setRemoving] = useState<Provider | null>(null),
+        [newProvider, setNewProvider] = useState({
+            name: "",
+            description: "",
+            category: "Custom",
+            auth: "bearer",
+            templateId: "",
+        });
+    const createDialog = useRef<HTMLDialogElement>(null),
+        removeDialog = useRef<HTMLDialogElement>(null);
+    useEffect(() => {
+        if (createOpen) createDialog.current?.showModal();
+        else createDialog.current?.close();
+    }, [createOpen]);
+    useEffect(() => {
+        if (removing) removeDialog.current?.showModal();
+        else removeDialog.current?.close();
+    }, [removing]);
+    async function load(signal?: AbortSignal) {
+        setData(await api(undefined, signal));
+        window.dispatchEvent(new Event("integration-catalog-changed"));
+    }
+    useEffect(() => {
+        const c = new AbortController();
+        api(undefined, c.signal)
+            .then((result) => {
+                if (!c.signal.aborted) setData(result);
+            })
+            .catch((e) => {
+                if (!c.signal.aborted) {
+                    if (e.status === 403) setRestricted(true);
+                    else setError(e.message);
+                }
+            });
+        return () => c.abort();
+    }, []);
+    useEffect(() => {
+        if (selected) {
+            dialog.current?.showModal();
+        } else dialog.current?.close();
+    }, [selected]);
+    function operations(p: Provider): Operation[] {
+        if (!p.custom) return p.operations;
+        try {
+            const rows = JSON.parse(values.mapping || "[]");
+            return Array.isArray(rows)
+                ? rows
+                      .filter((r) => r && typeof r.id === "string" && typeof r.method === "string")
+                      .map((r) => ({ ...r, write: r.method.toUpperCase() !== "GET" }))
+                : [];
+        } catch {
+            return [];
+        }
+    }
+    function open(p: Provider) {
+        const row = data?.connections.find((c) => c.provider === p.id);
+        const config = { ...(row?.config || {}) };
+        if (p.custom && !config.mapping)
+            config.mapping = JSON.stringify(
+                [
+                    {
+                        id: "list",
+                        label: "List records",
+                        method: "GET",
+                        path: "/replace-with-documented-path",
+                        example: {},
+                    },
+                ],
+                null,
+                2,
+            );
+        setDirty(false);
+        setSelected(p);
+        setValues(config);
+        setEnabled(row?.enabled || false);
+        setError("");
+        setMessage("");
+        setResult(null);
+        setPreview(null);
+        const monitor = data?.monitors.find((m) => m.provider === p.id);
+        setMonitorEnabled(monitor?.enabled || false);
+        setMonitorInterval(String(monitor?.interval_seconds || 300));
+        let available = p.operations;
+        if (p.custom) {
+            try {
+                available = JSON.parse(config.mapping || "[]");
+            } catch {
+                available = [];
+            }
+        }
+        const first = available[0];
+        setOperation(first?.id || "");
+        setInputs(JSON.stringify(first?.example || {}, null, 2));
+    }
+    async function act(action: string) {
+        if (!selected) return;
+        setBusy(action);
+        setError("");
+        setMessage("");
+        try {
+            let r;
+            if (action === "save") {
+                r = await api({ action, provider: selected.id, config: values, enabled });
+                setDirty(false);
+                setMessage(r.message);
+                setValues((v) =>
+                    Object.fromEntries(
+                        Object.entries(v).filter(
+                            ([key]) => !selected.fields.find((f) => f.key === key)?.secret,
+                        ),
+                    ),
+                );
+                setPreview(null);
+                const available = operations(selected);
+                if (!available.some((o) => o.id === operation)) {
+                    setOperation(available[0]?.id || "");
+                    setInputs(JSON.stringify(available[0]?.example || {}, null, 2));
+                }
+            } else if (action === "disconnect") {
+                await api({ action, provider: selected.id });
+                setSelected(null);
+            } else if (action === "approve") {
+                r = await api({ action, token: preview?.token });
+                setPreview(null);
+                setResult(r);
+                setMessage(
+                    "Source response received. Review its result for completion or delivery status.",
+                );
+            } else if (action === "monitor") {
+                await api({
+                    action,
+                    provider: selected.id,
+                    operation,
+                    inputs: JSON.parse(inputs),
+                    interval: Number(monitorInterval),
+                    enabled: monitorEnabled,
+                });
+                setMessage(
+                    "Read monitor settings saved. The integration worker performs polling while the app worker is running.",
+                );
+            } else if (action === "monitor_snapshot") {
+                setResult(await api({ action, provider: selected.id }));
+            } else {
+                const parsed = JSON.parse(inputs);
+                if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+                    throw new Error("Inputs must be a JSON object.");
+                r = await api({ action, provider: selected.id, operation, inputs: parsed });
+                if (r.status === "awaiting_approval") setPreview(r);
+                else {
+                    setResult(r);
+                    setPreview(null);
+                }
+            }
+            await load();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Request failed.");
+        } finally {
+            setBusy("");
+        }
+    }
+    async function install(key: string) {
+        setBusy(key);
+        setError("");
+        setMessage("");
+        try {
+            const response = await fetch("/api/agents/integration-templates", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ template: key }),
+            });
+            const r = await response.json();
+            if (!response.ok) throw new Error(r.error);
+            setMessage(
+                key === "all"
+                    ? `${r.created} templates installed; ${r.preserved} existing agents preserved.`
+                    : `${r.name} ${r.created ? "created with connected tool references" : "already exists and was preserved"}. Open Agents to configure its instructions and knowledge.`,
+            );
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Could not install template.");
+        } finally {
+            setBusy("");
+        }
+    }
+    async function createProvider() {
+        setBusy("create_provider");
+        setError("");
+        try {
+            const result = await api({ action: "create_provider", ...newProvider });
+            await load();
+            setCreateOpen(false);
+            setNewProvider({
+                name: "",
+                description: "",
+                category: "Custom",
+                auth: "bearer",
+                templateId: "",
+            });
+            setCategory("All categories");
+            setQuery("");
+            open(result.provider);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Could not create integration.");
+        } finally {
+            setBusy("");
+        }
+    }
+    async function removeProvider(id: string, restore = false) {
+        setBusy("archive_provider");
+        setError("");
+        try {
+            await api({ action: restore ? "restore_provider" : "archive_provider", provider: id });
+            await load();
+            setRemoving(null);
+            setMessage(
+                restore
+                    ? "Integration restored in a disabled state. Review its configuration before enabling it."
+                    : "Integration removed. Existing agent references will report it unavailable. You can restore it below.",
+            );
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Could not update integration.");
+        } finally {
+            setBusy("");
+        }
+    }
+    const categories = ["All categories", ...new Set(integrationCatalog.map((p) => p.category))];
+    const visible = integrationCatalog.filter(
+        (p) =>
+            (category === "All categories" || p.category === category) &&
+            `${p.name} ${p.description}`.toLowerCase().includes(query.toLowerCase()),
+    );
+    if (restricted) return null;
+    return (
+        <section className="mb-7 rounded-2xl border border-[#e5e2f5] bg-[#fcfbff] p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                    <div className="flex items-center gap-2 text-[#6255e8]">
+                        <Plug className="size-5" />
+                        <h2 className="text-base font-semibold text-slate-800">
+                            Integration catalog
+                        </h2>
+                    </div>
+                    <p className="mt-2 max-w-2xl text-xs leading-5 text-slate-500">
+                        Configure once, then connect tools to your agents. Credentials stay
+                        encrypted on the server. Your existing agents remain unchanged.
+                    </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                    {data?.canGrantCreation && (
+                        <button
+                            aria-label="Share integration creation access"
+                            title="Share integration creation access"
+                            className={secondary}
+                            onClick={() => openSharing("*", "Add integrations")}
+                        >
+                            <Share2 className="size-4" />
+                            Share access
+                        </button>
+                    )}
+                    {data?.canCreate && (
+                        <button className={primary} onClick={() => setCreateOpen(true)}>
+                            <Plus className="size-4" />
+                            Add integration
+                        </button>
+                    )}
+                    <button
+                        className={secondary}
+                        onClick={() => {
+                            setError("");
+                            void load().catch((e) => setError(e.message));
+                        }}
+                    >
+                        <RefreshCw className="size-3.5" />
+                        Refresh
+                    </button>
+                </div>
+            </div>
+            <div
+                className="my-5 flex flex-wrap gap-2"
+                role="tablist"
+                aria-label="Integration views"
+            >
+                {[
+                    ["connections", "Connections"],
+                    ...(data?.canGrantCreation ? [["agents", "Agent templates"]] : []),
+                    ["activity", "Activity"],
+                ].map(([id, label]) => (
+                    <button
+                        key={id}
+                        role="tab"
+                        aria-selected={tab === id}
+                        onClick={() => setTab(id)}
+                        className={`rounded-xl px-4 py-2 text-xs font-semibold ${tab === id ? "bg-[#ece8ff] text-[#6255e8]" : "text-slate-500 hover:bg-white"}`}
+                    >
+                        {label}
+                    </button>
+                ))}
+            </div>
+            {error && !selected && (
+                <p role="alert" className="mb-4 rounded-xl bg-rose-50 p-3 text-xs text-rose-700">
+                    {error}
+                </p>
+            )}
+            {message && !selected && (
+                <p
+                    role="status"
+                    className="mb-4 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800"
+                >
+                    {message}
+                </p>
+            )}
+            {tab === "connections" && (
+                <>
+                    <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_220px]">
+                        <label className="relative">
+                            <Search className="absolute left-3 top-3 size-4 text-slate-400" />
+                            <input
+                                aria-label="Search integrations"
+                                className={`${control} pl-9`}
+                                placeholder="Search integrations…"
+                                value={query}
+                                onChange={(e) => setQuery(e.target.value)}
+                            />
+                        </label>
+                        <ThemedSelect
+                            portalContainer={selected ? dialog : undefined}
+                            aria-label="Filter integration category"
+                            className={control}
+                            value={category}
+                            onChange={(e) => setCategory(e.target.value)}
+                        >
+                            {categories.map((c) => (
+                                <option key={c}>{c}</option>
+                            ))}
+                        </ThemedSelect>
+                    </div>
+                    {!data && !error && (
+                        <p className="py-5 text-xs text-slate-500">
+                            Loading saved connection states…
+                        </p>
+                    )}
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {visible.map((p) => {
+                            const s = data?.connections.find((c) => c.provider === p.id);
+                            const status = !s?.enabled ? "Not configured" : "Configured";
+                            return (
+                                <article
+                                    key={p.id}
+                                    className="flex flex-col rounded-2xl border border-[#e8e7ef] bg-white p-4"
+                                >
+                                    <div className="flex flex-wrap items-start justify-between gap-2">
+                                        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8a80bc]">
+                                            {p.category}
+                                        </span>
+                                        {data?.shareableProviders.some(
+                                            (s) => s.provider === p.id,
+                                        ) && (
+                                            <button
+                                                aria-label={`Share integration ${p.name}`}
+                                                title="Share integration"
+                                                onClick={() => openSharing(p.id, p.name)}
+                                                className="ml-auto rounded-lg p-1 text-[#6255e8] hover:bg-violet-50"
+                                            >
+                                                <Share2 className="size-3.5" />
+                                            </button>
+                                        )}
+                                        {data?.deletableProviders.includes(p.id) && (
+                                            <button
+                                                aria-label={`Delete integration ${p.name}`}
+                                                title="Delete integration"
+                                                onClick={() => setRemoving(p)}
+                                                className="ml-auto rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600"
+                                            >
+                                                <Trash2 className="size-3.5" />
+                                            </button>
+                                        )}
+                                        <span
+                                            className={`rounded-full px-2 py-1 text-[10px] ${status === "Configured" ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
+                                        >
+                                            {status}
+                                        </span>
+                                    </div>
+                                    <h3 className="mt-3 text-sm font-semibold text-slate-800">
+                                        {p.name}
+                                    </h3>
+                                    {data && !data.deletableProviders.includes(p.id) && (
+                                        <span className="mt-2 text-[10px] font-medium text-[#6255e8]">
+                                            Shared integration
+                                        </span>
+                                    )}
+                                    {s?.enabled && s.check_state === "failed" && (
+                                        <p className="mt-2 text-[10px] text-amber-700">
+                                            Connection check failed · review setup
+                                        </p>
+                                    )}
+                                    {s?.enabled && s.check_state === "reachable" && (
+                                        <p className="mt-2 text-[10px] text-emerald-700">
+                                            Selected read check passed
+                                        </p>
+                                    )}
+                                    <p className="mt-2 grow text-xs leading-5 text-slate-500">
+                                        {p.description}
+                                    </p>
+                                    <div className="mt-4 flex items-center justify-between">
+                                        <span className="text-[10px] text-slate-400">
+                                            {p.custom
+                                                ? "API mapping required"
+                                                : `${p.operations.length} operations`}
+                                        </span>
+                                        <button
+                                            disabled={!data}
+                                            onClick={() => open(p)}
+                                            className="inline-flex items-center gap-1 text-xs font-semibold text-[#6255e8] disabled:opacity-50"
+                                        >
+                                            {s ? "Configure" : "Set up"}
+                                            <ChevronRight className="size-4" />
+                                        </button>
+                                    </div>
+                                </article>
+                            );
+                        })}
+                    </div>
+                    {!visible.length && (
+                        <p className="p-6 text-center text-xs text-slate-500">
+                            {data && !query
+                                ? "Your Admin has not shared any integrations with your role yet."
+                                : "No matching integrations."}
+                        </p>
+                    )}
+                </>
+            )}
+            {tab === "agents" && (
+                <>
+                    <button
+                        className={`${primary} mb-4`}
+                        disabled={!!busy}
+                        onClick={() => void install("all")}
+                    >
+                        {busy === "all" ? (
+                            <LoaderCircle className="size-4 animate-spin" />
+                        ) : (
+                            <CheckCircle2 className="size-4" />
+                        )}
+                        Install all missing templates
+                    </button>
+                    <p className="mb-4 text-xs leading-5 text-slate-500">
+                        Install individual templates without replacing an existing agent with the
+                        same name. Missing accounts remain explicitly disconnected. Demo test names
+                        have no recoverable behaviour and are not presented as functional templates.
+                    </p>
+                    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                        {demoAgentTemplates.map((t) => (
+                            <article
+                                key={t.id}
+                                className="rounded-2xl border border-[#e8e7ef] bg-white p-4"
+                            >
+                                <h3 className="text-sm font-semibold text-slate-800">{t.name}</h3>
+                                <p className="mt-2 text-xs leading-5 text-slate-500">{t.purpose}</p>
+                                <p className="mt-3 text-[10px] text-[#8073bf]">
+                                    {t.providers
+                                        .map(
+                                            (p) => integrationCatalog.find((c) => c.id === p)?.name,
+                                        )
+                                        .join(" · ") || "Indexed API documentation"}
+                                </p>
+                                <button
+                                    disabled={!!busy}
+                                    onClick={() => void install(t.id)}
+                                    className={`${secondary} mt-4`}
+                                >
+                                    {busy === t.id ? (
+                                        <LoaderCircle className="size-3.5 animate-spin" />
+                                    ) : (
+                                        <CheckCircle2 className="size-3.5" />
+                                    )}
+                                    Install template
+                                </button>
+                            </article>
+                        ))}
+                    </div>
+                </>
+            )}
+            {tab === "activity" && (
+                <div className="overflow-x-auto rounded-xl border border-[#e8e7ef] bg-white">
+                    <table className="w-full text-left text-xs">
+                        <thead className="bg-[#f7f5fd] text-slate-500">
+                            <tr>
+                                {["Time", "Integration", "Operation", "Status", "Details"].map(
+                                    (h) => (
+                                        <th key={h} className="p-3 font-medium">
+                                            {h}
+                                        </th>
+                                    ),
+                                )}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {data?.history.map((h) => (
+                                <tr key={h.id} className="border-t border-slate-100">
+                                    <td className="whitespace-nowrap p-3 text-slate-500">
+                                        {new Date(h.created_at).toLocaleString()}
+                                    </td>
+                                    <td className="p-3">
+                                        {integrationCatalog.find((p) => p.id === h.provider)?.name}
+                                    </td>
+                                    <td className="p-3">{h.operation}</td>
+                                    <td className="p-3">{h.status}</td>
+                                    <td className="p-3 text-slate-500">{h.summary}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {!data?.history.length && (
+                        <p className="p-6 text-center text-xs text-slate-500">
+                            No integration operations recorded yet.
+                        </p>
+                    )}
+                </div>
+            )}
+            {!!data?.removed.length && (
+                <details className="mt-5 rounded-xl border border-[#e8e7ef] bg-white p-3 text-xs text-slate-500">
+                    <summary className="cursor-pointer font-medium">
+                        Removed integrations ({data.removed.length})
+                    </summary>
+                    <div className="mt-3 space-y-2">
+                        {data.removed.map((p) => (
+                            <div key={p.id} className="flex items-center justify-between gap-3">
+                                <span>{p.name}</span>
+                                <button
+                                    disabled={!!busy}
+                                    onClick={() => void removeProvider(p.id, true)}
+                                    className="inline-flex items-center gap-1 font-semibold text-[#6255e8]"
+                                >
+                                    <Undo2 className="size-3" />
+                                    Restore
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                </details>
+            )}
+            <dialog
+                ref={createDialog}
+                onCancel={() => setCreateOpen(false)}
+                onClose={() => setCreateOpen(false)}
+                aria-label="Add integration"
+                className="fixed inset-0 m-auto max-h-[90dvh] w-[min(560px,94vw)] overflow-y-auto rounded-2xl border border-[#e5e2f0] bg-white p-6 text-slate-700 shadow-2xl backdrop:bg-slate-900/35"
+            >
+                <form
+                    onSubmit={(e) => {
+                        e.preventDefault();
+                        void createProvider();
+                    }}
+                >
+                    <div className="flex items-center justify-between">
+                        <h2 className="text-lg font-semibold">Add integration</h2>
+                        <button
+                            type="button"
+                            aria-label="Close add integration"
+                            onClick={() => setCreateOpen(false)}
+                            className="p-2"
+                        >
+                            <X className="size-4" />
+                        </button>
+                    </div>
+                    <p className="mt-2 text-xs leading-5 text-slate-500">
+                        Create a reusable API connection. It starts as Not configured; enter its
+                        URL, authentication and operation mappings in Set up.
+                    </p>
+                    {error && (
+                        <p role="alert" className="mt-3 text-xs text-rose-600">
+                            {error}
+                        </p>
+                    )}
+                    <div className="mt-5 space-y-4">
+                        <label className="block text-xs">
+                            Integration type
+                            <ThemedSelect
+                                portalContainer={createDialog}
+                                className={`${control} mt-2`}
+                                value={newProvider.templateId}
+                                onChange={(e) => {
+                                    const p = builtinCatalog.find((p) => p.id === e.target.value);
+                                    setNewProvider({
+                                        ...newProvider,
+                                        templateId: e.target.value,
+                                        auth: p?.auth || "bearer",
+                                        ...(p
+                                            ? {
+                                                  name: p.name,
+                                                  description: p.description,
+                                                  category: p.category,
+                                              }
+                                            : {}),
+                                    });
+                                }}
+                            >
+                                <option value="">Custom HTTP API</option>
+                                {builtinCatalog.map((p) => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.name}
+                                    </option>
+                                ))}
+                            </ThemedSelect>
+                        </label>
+                        <label className="block text-xs">
+                            Integration name
+                            <input
+                                required
+                                maxLength={100}
+                                autoComplete="off"
+                                className={`${control} mt-2`}
+                                value={newProvider.name}
+                                onChange={(e) =>
+                                    setNewProvider({ ...newProvider, name: e.target.value })
+                                }
+                            />
+                        </label>
+                        <label className="block text-xs">
+                            Purpose
+                            <textarea
+                                maxLength={2000}
+                                className="mt-2 min-h-24 w-full rounded-xl border border-[#dfe2ee] p-3 text-xs"
+                                value={newProvider.description}
+                                onChange={(e) =>
+                                    setNewProvider({ ...newProvider, description: e.target.value })
+                                }
+                            />
+                        </label>
+                        <label className="block text-xs">
+                            Category
+                            <ThemedSelect
+                                portalContainer={createDialog}
+                                className={`${control} mt-2`}
+                                value={newProvider.category}
+                                onChange={(e) =>
+                                    setNewProvider({ ...newProvider, category: e.target.value })
+                                }
+                            >
+                                {[
+                                    ...new Set([
+                                        ...categories.filter((c) => c !== "All categories"),
+                                        "Custom",
+                                    ]),
+                                ].map((c) => (
+                                    <option key={c}>{c}</option>
+                                ))}
+                            </ThemedSelect>
+                        </label>
+                        {!newProvider.templateId && (
+                            <label className="block text-xs">
+                                Authentication
+                                <ThemedSelect
+                                    portalContainer={createDialog}
+                                    className={`${control} mt-2`}
+                                    value={newProvider.auth}
+                                    onChange={(e) =>
+                                        setNewProvider({ ...newProvider, auth: e.target.value })
+                                    }
+                                >
+                                    <option value="bearer">API key / bearer token</option>
+                                    <option value="basic">Username and password / token</option>
+                                    <option value="oauth2">OAuth 2.0 client credentials</option>
+                                    <option value="none">No authentication</option>
+                                </ThemedSelect>
+                            </label>
+                        )}
+                        <button disabled={!!busy} className={primary}>
+                            {busy === "create_provider" ? (
+                                <LoaderCircle className="size-4 animate-spin" />
+                            ) : (
+                                <Plus className="size-4" />
+                            )}
+                            Create integration
+                        </button>
+                    </div>
+                </form>
+            </dialog>
+            <dialog
+                ref={removeDialog}
+                onCancel={() => setRemoving(null)}
+                onClose={() => setRemoving(null)}
+                aria-label="Delete integration"
+                className="fixed inset-0 m-auto w-[min(480px,94vw)] rounded-2xl border border-[#e5e2f0] bg-white p-6 shadow-2xl backdrop:bg-slate-900/35"
+            >
+                <h2 className="text-lg font-semibold text-slate-800">Delete {removing?.name}?</h2>
+                <p className="mt-3 text-xs leading-5 text-slate-500">
+                    This disables the connection, removes its card and invalidates pending action
+                    approvals. Existing agents are preserved and will report this integration
+                    unavailable. You can restore the card later.
+                </p>
+                {error && (
+                    <p role="alert" className="mt-3 text-xs text-rose-600">
+                        {error}
+                    </p>
+                )}
+                <div className="mt-5 flex gap-3">
+                    <button
+                        disabled={!!busy}
+                        onClick={() => removing && void removeProvider(removing.id)}
+                        className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-semibold text-white"
+                    >
+                        Delete integration
+                    </button>
+                    <button
+                        disabled={!!busy}
+                        onClick={() => setRemoving(null)}
+                        className={secondary}
+                    >
+                        Cancel
+                    </button>
+                </div>
+            </dialog>
+            <dialog
+                ref={shareDialog}
+                onCancel={() => {
+                    if (!busy) setShareTarget(null);
+                }}
+                onClose={() => setShareTarget(null)}
+                className="m-auto w-[calc(100%-2rem)] max-w-md rounded-2xl border border-[#e5e2f5] bg-white p-6 text-slate-700 shadow-xl backdrop:bg-slate-900/30"
+                aria-labelledby="integration-share-title"
+            >
+                <div className="flex items-center justify-between gap-3">
+                    <h2 id="integration-share-title" className="text-lg font-semibold">
+                        {shareTarget?.id === "*"
+                            ? "Who can add integrations?"
+                            : "Share integration"}
+                    </h2>
+                    <button
+                        type="button"
+                        disabled={!!busy}
+                        aria-label="Close sharing"
+                        onClick={() => setShareTarget(null)}
+                        className="rounded-lg p-2 hover:bg-slate-50"
+                    >
+                        <X className="size-5" />
+                    </button>
+                </div>
+                <p className="mt-3 text-sm font-medium">{shareTarget?.name}</p>
+                <p className="mt-2 text-xs leading-5 text-slate-500">
+                    {shareTarget?.id === "*"
+                        ? "Selected roles can create their own integrations. Existing catalog integrations are shared separately using the share icon on each card."
+                        : "Selected roles can set up this integration using their own credentials."}{" "}
+                    Credentials and saved connection details stay private.
+                </p>
+                {shareTarget?.id !== "*" && !shareRoleOptions.includes("admin") && (
+                    <p className="mt-2 text-xs text-slate-500">
+                        Admin-owned tools cannot be shared back to Admins.
+                    </p>
+                )}
+                <fieldset disabled={!!busy} className="mt-5 space-y-3">
+                    <legend className="sr-only">Share with roles</legend>
+                    <label className="flex items-center gap-3 border-b border-slate-100 pb-3 text-sm font-semibold">
+                        <input
+                            type="checkbox"
+                            className="size-4 accent-[#6255e8]"
+                            checked={
+                                shareRoleOptions.length > 0 &&
+                                shareRoleOptions.every((role) => shareRoles.includes(role))
+                            }
+                            onChange={(e) =>
+                                setShareRoles(e.target.checked ? [...shareRoleOptions] : [])
+                            }
+                        />
+                        Everyone
+                    </label>
+                    {shareRoleOptions.map((role) => (
+                        <label key={role} className="flex items-center gap-3 text-sm">
+                            <input
+                                type="checkbox"
+                                className="size-4 accent-[#6255e8]"
+                                checked={shareRoles.includes(role)}
+                                onChange={(e) =>
+                                    setShareRoles((v) =>
+                                        e.target.checked
+                                            ? [...v, role]
+                                            : v.filter((r) => r !== role),
+                                    )
+                                }
+                            />
+                            {role[0].toUpperCase() + role.slice(1)}
+                        </label>
+                    ))}
+                </fieldset>
+                {error && (
+                    <p role="alert" className="mt-4 text-xs text-rose-600">
+                        {error}
+                    </p>
+                )}
+                <div className="mt-6 flex justify-end gap-3">
+                    <button
+                        disabled={!!busy}
+                        className={secondary}
+                        onClick={() => setShareTarget(null)}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        disabled={!!busy}
+                        className={primary}
+                        onClick={() => void saveSharing()}
+                    >
+                        {busy === "share" && <LoaderCircle className="size-4 animate-spin" />}Save
+                        sharing
+                    </button>
+                </div>
+            </dialog>
+            <dialog
+                ref={dialog}
+                onCancel={(e) => {
+                    if (busy) e.preventDefault();
+                    else setSelected(null);
+                }}
+                onClose={() => setSelected(null)}
+                className="fixed inset-0 m-auto max-h-[90dvh] w-[min(940px,94vw)] overflow-y-auto rounded-2xl border border-[#e5e2f0] bg-white p-0 text-slate-700 shadow-2xl backdrop:bg-slate-900/35"
+                aria-label={`${selected?.name || "Integration"} setup`}
+            >
+                {selected && (
+                    <>
+                        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-[#eeeaf8] bg-white p-5">
+                            <div>
+                                <p className="text-[10px] font-semibold uppercase tracking-widest text-[#8073bf]">
+                                    {selected.category}
+                                </p>
+                                <h2 className="mt-1 text-lg font-semibold text-slate-800">
+                                    {selected.name}
+                                </h2>
+                            </div>
+                            <button
+                                disabled={!!busy}
+                                aria-label="Close integration setup"
+                                className="rounded-lg p-2 hover:bg-slate-50"
+                                onClick={() => setSelected(null)}
+                            >
+                                <X className="size-5" />
+                            </button>
+                        </header>
+                        <div className="p-5 sm:p-6">
+                            <p className="text-xs leading-5 text-slate-500">
+                                {selected.description}
+                            </p>
+                            {selected.docs && (
+                                <a
+                                    href={selected.docs}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="mt-2 inline-flex items-center gap-1 text-xs text-[#6255e8]"
+                                >
+                                    Provider documentation
+                                    <ExternalLink className="size-3" />
+                                </a>
+                            )}
+                            {error && (
+                                <p
+                                    role="alert"
+                                    className="mt-4 rounded-xl bg-rose-50 p-3 text-xs text-rose-700"
+                                >
+                                    {error}
+                                </p>
+                            )}
+                            {message && (
+                                <p
+                                    role="status"
+                                    className="mt-4 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800"
+                                >
+                                    {message}
+                                </p>
+                            )}
+                            <form
+                                onChange={() => {
+                                    setDirty(true);
+                                    setPreview(null);
+                                }}
+                                onSubmit={(e) => {
+                                    e.preventDefault();
+                                    void act("save");
+                                }}
+                                className="mt-5 space-y-4"
+                            >
+                                {selected.reuse && (
+                                    <label className="block text-xs font-medium">
+                                        Connection source
+                                        <ThemedSelect
+                                            portalContainer={selected ? dialog : undefined}
+                                            value={values.reuseId || ""}
+                                            onChange={(e) =>
+                                                updateValues((v) => ({
+                                                    ...v,
+                                                    reuseId: e.target.value,
+                                                }))
+                                            }
+                                            className={`${control} mt-2`}
+                                        >
+                                            <option value="">Enter connection details</option>
+                                            {data?.existing
+                                                .filter((c) => c.kind === selected.reuse)
+                                                .map((c) => (
+                                                    <option key={c.id} value={c.id}>
+                                                        Use existing: {c.name}
+                                                    </option>
+                                                ))}
+                                        </ThemedSelect>
+                                    </label>
+                                )}
+                                {!values.reuseId && (
+                                    <div className="grid gap-4 sm:grid-cols-2">
+                                        {selected.fields.map((f) => (
+                                            <label
+                                                key={f.key}
+                                                className={`block text-xs font-medium ${f.key === "mapping" ? "sm:col-span-2" : ""}`}
+                                            >
+                                                {f.label}
+                                                {f.optional && (
+                                                    <span className="font-normal text-slate-400">
+                                                        {" "}
+                                                        · optional
+                                                    </span>
+                                                )}
+                                                {f.key === "mapping" ? (
+                                                    <>
+                                                        <textarea
+                                                            className="mt-2 min-h-44 w-full rounded-xl border border-[#dfe2ee] bg-[#fafbff] p-3 font-mono text-xs leading-5 outline-none focus:border-[#a9a2f2]"
+                                                            value={values[f.key] || ""}
+                                                            onChange={(e) => {
+                                                                updateValues({
+                                                                    ...values,
+                                                                    [f.key]: e.target.value,
+                                                                });
+                                                                setPreview(null);
+                                                            }}
+                                                        />
+                                                        <span className="mt-1 block text-[10px] font-normal leading-4 text-slate-400">
+                                                            Replace the example with documented
+                                                            relative paths. Non-GET mappings always
+                                                            require approval. Never include secrets
+                                                            in mappings.
+                                                        </span>
+                                                    </>
+                                                ) : (
+                                                    <input
+                                                        className={`${control} mt-2`}
+                                                        type={f.secret ? "password" : "text"}
+                                                        autoComplete={
+                                                            f.secret ? "new-password" : "off"
+                                                        }
+                                                        name={`integration-${selected.id}-${f.key}`}
+                                                        spellCheck={false}
+                                                        data-lpignore="true"
+                                                        data-1p-ignore="true"
+                                                        required={
+                                                            enabled &&
+                                                            !f.optional &&
+                                                            !(
+                                                                f.secret &&
+                                                                saved?.credential_fields?.includes(
+                                                                    f.key,
+                                                                )
+                                                            )
+                                                        }
+                                                        placeholder={
+                                                            f.secret &&
+                                                            saved?.credential_fields?.includes(
+                                                                f.key,
+                                                            )
+                                                                ? "Saved securely · leave blank to keep"
+                                                                : f.key === "baseUrl"
+                                                                  ? "https://your-instance.example.com"
+                                                                  : ""
+                                                        }
+                                                        value={values[f.key] || ""}
+                                                        onChange={(e) => {
+                                                            updateValues({
+                                                                ...values,
+                                                                [f.key]: e.target.value,
+                                                            });
+                                                            setPreview(null);
+                                                        }}
+                                                    />
+                                                )}
+                                            </label>
+                                        ))}
+                                    </div>
+                                )}
+                                {selected.custom &&
+                                    ["bearer", "mapped"].includes(selected.auth) && (
+                                        <div className="grid gap-3 sm:grid-cols-2">
+                                            <label className="text-xs">
+                                                Authentication header
+                                                <input
+                                                    className={`${control} mt-2`}
+                                                    value={values.authHeader || "Authorization"}
+                                                    onChange={(e) =>
+                                                        updateValues({
+                                                            ...values,
+                                                            authHeader: e.target.value,
+                                                        })
+                                                    }
+                                                />
+                                            </label>
+                                            <label className="text-xs">
+                                                Token format
+                                                <ThemedSelect
+                                                    portalContainer={selected ? dialog : undefined}
+                                                    className={`${control} mt-2`}
+                                                    value={
+                                                        values.authPrefix === undefined
+                                                            ? "Bearer "
+                                                            : values.authPrefix
+                                                    }
+                                                    onChange={(e) =>
+                                                        updateValues({
+                                                            ...values,
+                                                            authPrefix: e.target.value,
+                                                        })
+                                                    }
+                                                >
+                                                    <option value="Bearer ">Bearer token</option>
+                                                    <option value="">Raw API key</option>
+                                                </ThemedSelect>
+                                            </label>
+                                        </div>
+                                    )}
+                                <label className="flex items-center gap-2 text-xs">
+                                    <input
+                                        type="checkbox"
+                                        checked={enabled}
+                                        onChange={(e) => setEnabled(e.target.checked)}
+                                    />
+                                    Enable this connection
+                                </label>
+                                <div className="flex flex-wrap items-center gap-3">
+                                    <button disabled={!!busy} className={primary}>
+                                        {busy === "save" && (
+                                            <LoaderCircle className="size-4 animate-spin" />
+                                        )}
+                                        Save configuration
+                                    </button>
+                                    <span className="inline-flex items-center gap-1 text-[10px] text-slate-400">
+                                        <ShieldCheck className="size-3.5" />
+                                        Secrets are never returned to the browser
+                                    </span>
+                                    {saved && (
+                                        <button
+                                            type="button"
+                                            disabled={!!busy}
+                                            className="ml-auto text-xs text-rose-600"
+                                            onClick={() => void act("disconnect")}
+                                        >
+                                            Disconnect & remove credentials
+                                        </button>
+                                    )}
+                                </div>
+                            </form>
+                            <section className="mt-6 border-t border-[#eeeaf8] pt-5">
+                                <h3 className="text-sm font-semibold">Operations</h3>
+                                <p className="mt-1 text-xs leading-5 text-slate-500">
+                                    Save changes before running. Unsaved connection changes disable
+                                    execution. A connection check runs your selected read operation;
+                                    it does not verify all permissions.
+                                </p>
+                                {saved?.checked_at && (
+                                    <p className="mt-2 text-[10px] text-slate-400">
+                                        Last check: {new Date(saved.checked_at).toLocaleString()} ·{" "}
+                                        {saved.check_message}
+                                    </p>
+                                )}
+                                <label className="mt-4 block text-xs">
+                                    Operation
+                                    <ThemedSelect
+                                        portalContainer={selected ? dialog : undefined}
+                                        className={`${control} mt-2`}
+                                        value={operation}
+                                        onChange={(e) => {
+                                            setOperation(e.target.value);
+                                            setInputs(
+                                                JSON.stringify(
+                                                    operations(selected).find(
+                                                        (o) => o.id === e.target.value,
+                                                    )?.example || {},
+                                                    null,
+                                                    2,
+                                                ),
+                                            );
+                                            setPreview(null);
+                                            setResult(null);
+                                        }}
+                                    >
+                                        {operations(selected).map((o) => (
+                                            <option key={o.id} value={o.id}>
+                                                {o.label}
+                                                {o.write ? " · approval required" : " · read"}
+                                            </option>
+                                        ))}
+                                    </ThemedSelect>
+                                </label>
+                                <label className="mt-4 block text-xs">
+                                    Operation inputs (JSON)
+                                    <textarea
+                                        value={inputs}
+                                        onChange={(e) => {
+                                            setInputs(e.target.value);
+                                            setPreview(null);
+                                        }}
+                                        className="mt-2 min-h-32 w-full rounded-xl border border-[#dfe2ee] bg-[#fafbff] p-3 font-mono text-xs leading-5"
+                                    />
+                                </label>
+                                <div className="mt-3 flex flex-wrap gap-2">
+                                    <button
+                                        disabled={!!busy || dirty || !saved?.enabled || !operation}
+                                        className={primary}
+                                        onClick={() => void act("run")}
+                                    >
+                                        {busy === "run" ? (
+                                            <LoaderCircle className="size-4 animate-spin" />
+                                        ) : (
+                                            <Plug className="size-4" />
+                                        )}
+                                        {operations(selected).find((o) => o.id === operation)?.write
+                                            ? "Prepare action preview"
+                                            : "Run read operation"}
+                                    </button>
+                                    <button
+                                        disabled={
+                                            !!busy ||
+                                            dirty ||
+                                            !saved?.enabled ||
+                                            !operation ||
+                                            !!operations(selected).find((o) => o.id === operation)
+                                                ?.write
+                                        }
+                                        className={secondary}
+                                        onClick={() => void act("check")}
+                                    >
+                                        Check connection
+                                    </button>
+                                </div>
+                                <div className="mt-5 rounded-xl border border-[#e5e2f5] p-4">
+                                    <h4 className="text-xs font-semibold">
+                                        Background read monitor
+                                    </h4>
+                                    <p className="mt-1 text-[11px] leading-5 text-slate-500">
+                                        Poll this selected read operation using the existing
+                                        integration worker. Saves the latest encrypted result with
+                                        its check time. No automatic external changes or emails are
+                                        triggered.
+                                    </p>
+                                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                                        <label className="flex items-center gap-2 text-xs">
+                                            <input
+                                                type="checkbox"
+                                                checked={monitorEnabled}
+                                                onChange={(e) =>
+                                                    setMonitorEnabled(e.target.checked)
+                                                }
+                                            />
+                                            Enable polling
+                                        </label>
+                                        <ThemedSelect
+                                            portalContainer={selected ? dialog : undefined}
+                                            aria-label="Monitor interval"
+                                            className={`${control} max-w-40`}
+                                            value={monitorInterval}
+                                            onChange={(e) => setMonitorInterval(e.target.value)}
+                                        >
+                                            <option value="60">Every minute</option>
+                                            <option value="300">Every 5 minutes</option>
+                                            <option value="900">Every 15 minutes</option>
+                                            <option value="3600">Every hour</option>
+                                            <option value="86400">Every day</option>
+                                        </ThemedSelect>
+                                        <button
+                                            disabled={
+                                                !!busy ||
+                                                dirty ||
+                                                !saved?.enabled ||
+                                                !operation ||
+                                                !!operations(selected).find(
+                                                    (o) => o.id === operation,
+                                                )?.write
+                                            }
+                                            className={secondary}
+                                            onClick={() => void act("monitor")}
+                                        >
+                                            Save monitor
+                                        </button>
+                                        <button
+                                            disabled={!!busy || !saved}
+                                            className="text-xs font-semibold text-[#6255e8]"
+                                            onClick={() => void act("monitor_snapshot")}
+                                        >
+                                            Latest recorded result
+                                        </button>
+                                    </div>
+                                    {data?.monitors.find((m) => m.provider === selected.id)
+                                        ?.last_checked_at && (
+                                        <p className="mt-3 text-[10px] text-slate-400">
+                                            Last poll:{" "}
+                                            {new Date(
+                                                data.monitors.find(
+                                                    (m) => m.provider === selected.id,
+                                                )!.last_checked_at!,
+                                            ).toLocaleString()}{" "}
+                                            ·{" "}
+                                            {
+                                                data.monitors.find(
+                                                    (m) => m.provider === selected.id,
+                                                )?.last_status
+                                            }
+                                        </p>
+                                    )}
+                                </div>
+                                {preview && (
+                                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                                        <h4 className="text-sm font-semibold text-amber-900">
+                                            Review external action
+                                        </h4>
+                                        <p className="mt-1 text-xs text-amber-800">
+                                            {preview.method} · {preview.operation} · expires in 10
+                                            minutes. Nothing has been sent.
+                                        </p>
+                                        <pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs">
+                                            {JSON.stringify(
+                                                {
+                                                    destination: preview.destination,
+                                                    inputs: preview.inputs,
+                                                },
+                                                null,
+                                                2,
+                                            )}
+                                        </pre>
+                                        <div className="mt-3 flex gap-2">
+                                            <button
+                                                disabled={!!busy}
+                                                className={primary}
+                                                onClick={() => void act("approve")}
+                                            >
+                                                Approve exact action
+                                            </button>
+                                            <button
+                                                disabled={!!busy}
+                                                className={secondary}
+                                                onClick={() => setPreview(null)}
+                                            >
+                                                Cancel
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+                                {result !== null && (
+                                    <div className="mt-4 rounded-xl border border-[#e5e2f5] bg-[#faf9ff] p-4">
+                                        <h4 className="text-xs font-semibold">Source result</h4>
+                                        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5">
+                                            {JSON.stringify(result, null, 2)}
+                                        </pre>
+                                    </div>
+                                )}
+                            </section>
+                        </div>
+                    </>
+                )}
+            </dialog>
+        </section>
+    );
 }

@@ -1,29 +1,376 @@
 "use client";
-import {useCallback,useEffect,useRef,useState} from 'react';
-import {operationalTime,operationalStatus,recoveryAdvice} from '@/lib/service-review/operational-display';
-type Snapshot={events:{id:string;name:string;source:string;status:string;summary:string;href:string;created_at:string}[];connections:{id:string;name:string;state:string;enabled:boolean;stale:boolean;last_error:string;import_error:string;checked_at:string;imported_at:string}[];tasks:{connectionId:string;id:string;name:string;status:string;stale:boolean;error:string;output:string;canRetry:boolean;eventAt:string|null;observedAt:string}[];workers:{integration:{online:boolean;checkedAt:string};security:{online:boolean;checkedAt:string}}};
-type Recovery={connectionId:string;taskId:string;terminal:boolean;verified:boolean;message:string};
-export default function OperationsControl({query=''}:{query?:string}){
- const [data,setData]=useState<Snapshot|null>(null),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[confirm,setConfirm]=useState<string|null>(null),[recovery,setRecovery]=useState<Recovery|null>(null);
- const pendingSource=useRef<{id:string;after:string}|null>(null);
- const verifying=useRef(false),recoveryConnectionId=recovery?.connectionId,recoveryTaskId=recovery?.taskId,recoveryTerminal=recovery?.terminal;
- const reload=useCallback(async()=>{try{const r=await fetch('/api/service-review-center/operations?query='+encodeURIComponent(query),{cache:'no-store',signal:AbortSignal.timeout(15000)}),b=await r.json();if(!r.ok)throw new Error(b.error);setData(b);setError('');const pending=pendingSource.current;if(pending){const source=(b as Snapshot).connections.find(c=>c.id===pending.id);if(source&&new Date(source.checked_at).getTime()>=new Date(pending.after).getTime()){if(source.state==='error'||source.import_error){setMessage('Recovery needs attention: the latest source check or import failed. Review the diagnosis below.');pendingSource.current=null;}else if(source.state==='connected'&&!source.stale&&new Date(source.imported_at).getTime()>=new Date(pending.after).getTime()){setMessage('Verified: the background check finished and fresh readings were imported.');pendingSource.current=null;}}}}catch(e){setError(e instanceof Error?e.message:'Diagnostics unavailable.');}},[query]);
- useEffect(()=>{const initial=setTimeout(()=>void reload(),0);const timer=setInterval(()=>void reload(),5000);return()=>{clearTimeout(initial);clearInterval(timer);};},[reload]);
- useEffect(()=>{if(!recoveryConnectionId||!recoveryTaskId||recoveryTerminal)return;let disposed=false;
- const verify=async()=>{if(verifying.current)return;verifying.current=true;try{const r=await fetch('/api/service-review-center/operations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'verify-workflow',connectionId:recoveryConnectionId,taskId:recoveryTaskId}),signal:AbortSignal.timeout(20000)}),b=await r.json();if(!disposed){if(!r.ok)setMessage('Verification is delayed. '+(b.error||'Check source availability.'));else{setRecovery(previous=>previous?{...previous,terminal:b.terminal,verified:b.verified,message:b.message}:null);await reload();}}}catch{if(!disposed)setMessage('Verification is delayed. The workflow may still be running; do not start another retry.');}finally{verifying.current=false;}};
- const timer=setInterval(()=>void verify(),5000);void verify();return()=>{disposed=true;clearInterval(timer);};},[recoveryConnectionId,recoveryTaskId,recoveryTerminal,reload]);
- async function recover(body:Record<string,unknown>){if(busy)return;setBusy(true);setMessage('');try{const r=await fetch('/api/service-review-center/operations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...body,requestKey:crypto.randomUUID()}),signal:AbortSignal.timeout(90000)}),b=await r.json();if(!r.ok)throw new Error(b.error);setMessage(b.message);if(b.pending&&b.checkedAfter)pendingSource.current={id:String(body.connectionId),after:b.checkedAfter};if(b.taskId)setRecovery({connectionId:String(body.connectionId),taskId:String(b.taskId),terminal:false,verified:false,message:'Recovery started. Waiting for a verified result.'});setConfirm(null);await reload();}catch(e){setMessage(e instanceof Error?e.message:'Recovery failed. Check task history before retrying.');}finally{setBusy(false);}}
- return <section className="security-card">
-  <div className="security-card-heading"><strong>Diagnosis & recovery</strong><button className="security-button" disabled={busy} onClick={()=>void reload()}>Refresh status</button></div>
-  {data&&<p className="security-muted">Integration worker: {data.workers.integration.online?'Online':'Not responding'} · Scanner worker: {data.workers.security.online?'Online':'Not responding'}. Updates every 5 seconds.</p>}
-  {error&&<p role="alert">{error}</p>}{!data&&!error&&<p>Checking operational records…</p>}
-  {recovery&&<div className="security-alert" role="status"><strong>{recovery.verified?'Recovery verified':recovery.terminal?'Recovery needs attention':'Verifying recovery'} · task {recovery.taskId}</strong><p>{recovery.message}</p></div>}
-  {message&&<p className="mt-3" role="status">{message}</p>}
-  {data?.connections.map(c=><article key={c.id} className="security-alert"><strong>{c.name} · {!c.enabled?'Paused':c.stale?'Needs attention':'Connected'}</strong><p className="security-muted">Last checked: {operationalTime(c.checked_at)}</p>{(c.last_error||c.import_error)&&<><p className="text-rose-700 mt-2">{c.last_error||c.import_error}</p><p className="text-sm mt-2">{recoveryAdvice(c.last_error||c.import_error).nextStep}</p></>}<button className="security-button mt-2" disabled={busy||!c.enabled} onClick={()=>void recover({action:'refresh',connectionId:c.id})}>{busy?'Checking…':'Recheck & verify connection'}</button></article>)}
-  {!!data?.tasks.length&&<p className="security-muted mt-4">Recorded workflow runs · historical results, not current server-health measurements.</p>}
-  {data?.tasks.map(t=><article key={t.connectionId+':'+t.id} className="security-alert"><strong>{t.name}</strong><p className={['failed','error'].includes(t.status)?'text-rose-700':'security-muted'}>{operationalStatus(t.status)} · task {t.id}{t.stale?' · Last known':''}</p><p className="security-muted">{t.eventAt?'Run ended':'Status recorded'}: {operationalTime(t.eventAt||t.observedAt)}</p>{t.error&&<><p className="text-rose-700 mt-2">Cause: {t.error.split('. Install/configure')[0]}</p><p className="text-sm mt-2">Next step: {recoveryAdvice(t.error).nextStep}</p></>}{t.output&&<details className="mt-3"><summary className="cursor-pointer text-sm text-indigo-600">View logs</summary><pre className="mt-2 rounded-lg bg-slate-50 p-3 whitespace-pre-wrap break-words text-xs">{t.output}</pre></details>}{t.canRetry&&<div className="mt-3">{confirm===t.connectionId+':'+t.id?<><p className="text-sm mb-2">Rerun {t.name} in its configured environment? This can change that environment. Existing permissions and concurrency limits apply.</p><button className="security-button security-primary" disabled={busy||!!recovery&&!recovery.terminal} onClick={()=>void recover({action:'retry-workflow',connectionId:t.connectionId,taskId:t.id,confirmed:true})}>Confirm retry & verify</button><button className="security-button ml-2" disabled={busy} onClick={()=>setConfirm(null)}>Cancel</button></>:<button className="security-button" disabled={busy||!!recovery&&!recovery.terminal} onClick={()=>setConfirm(t.connectionId+':'+t.id)}>Review recovery</button>}</div>}</article>)}
-  {!!data?.events.length&&<details className="mt-4"><summary className="cursor-pointer text-sm">Recent website activity</summary>{data.events.map(event=><article key={event.id} className="security-alert"><strong>{event.name} · {operationalStatus(event.status)}</strong><p className="security-muted">{operationalTime(event.created_at)}</p><p>{event.summary}</p>{event.href&&<a className="security-button" href={event.href}>Inspect workflow</a>}</article>)}</details>}
-  {data&&!data.events.length&&!data.connections.length&&!data.tasks.length&&<p className="security-muted mt-3">No connected source matches this request.</p>}
-  <p className="security-muted mt-3">Connection rechecks are read-only. Workflow retries require confirmation and are verified against the new run’s result. Missing software and credentials need configuration before recovery.</p>
- </section>;
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+    operationalTime,
+    operationalStatus,
+    recoveryAdvice,
+} from "@/lib/service-review/operational-display";
+type Snapshot = {
+    events: {
+        id: string;
+        name: string;
+        source: string;
+        status: string;
+        summary: string;
+        href: string;
+        created_at: string;
+    }[];
+    connections: {
+        id: string;
+        name: string;
+        state: string;
+        enabled: boolean;
+        stale: boolean;
+        last_error: string;
+        import_error: string;
+        checked_at: string;
+        imported_at: string;
+    }[];
+    tasks: {
+        connectionId: string;
+        id: string;
+        name: string;
+        status: string;
+        stale: boolean;
+        error: string;
+        output: string;
+        canRetry: boolean;
+        eventAt: string | null;
+        observedAt: string;
+    }[];
+    workers: {
+        integration: { online: boolean; checkedAt: string };
+        security: { online: boolean; checkedAt: string };
+    };
+};
+type Recovery = {
+    connectionId: string;
+    taskId: string;
+    terminal: boolean;
+    verified: boolean;
+    message: string;
+};
+export default function OperationsControl({ query = "" }: { query?: string }) {
+    const [data, setData] = useState<Snapshot | null>(null),
+        [error, setError] = useState(""),
+        [message, setMessage] = useState(""),
+        [busy, setBusy] = useState(false),
+        [confirm, setConfirm] = useState<string | null>(null),
+        [recovery, setRecovery] = useState<Recovery | null>(null);
+    const pendingSource = useRef<{ id: string; after: string } | null>(null);
+    const verifying = useRef(false),
+        recoveryConnectionId = recovery?.connectionId,
+        recoveryTaskId = recovery?.taskId,
+        recoveryTerminal = recovery?.terminal;
+    const reload = useCallback(async () => {
+        try {
+            const r = await fetch(
+                    "/api/service-review-center/operations?query=" + encodeURIComponent(query),
+                    { cache: "no-store", signal: AbortSignal.timeout(15000) },
+                ),
+                b = await r.json();
+            if (!r.ok) throw new Error(b.error);
+            setData(b);
+            setError("");
+            const pending = pendingSource.current;
+            if (pending) {
+                const source = (b as Snapshot).connections.find((c) => c.id === pending.id);
+                if (
+                    source &&
+                    new Date(source.checked_at).getTime() >= new Date(pending.after).getTime()
+                ) {
+                    if (source.state === "error" || source.import_error) {
+                        setMessage(
+                            "Recovery needs attention: the latest source check or import failed. Review the diagnosis below.",
+                        );
+                        pendingSource.current = null;
+                    } else if (
+                        source.state === "connected" &&
+                        !source.stale &&
+                        new Date(source.imported_at).getTime() >= new Date(pending.after).getTime()
+                    ) {
+                        setMessage(
+                            "Verified: the background check finished and fresh readings were imported.",
+                        );
+                        pendingSource.current = null;
+                    }
+                }
+            }
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Diagnostics unavailable.");
+        }
+    }, [query]);
+    useEffect(() => {
+        const initial = setTimeout(() => void reload(), 0);
+        const timer = setInterval(() => void reload(), 5000);
+        return () => {
+            clearTimeout(initial);
+            clearInterval(timer);
+        };
+    }, [reload]);
+    useEffect(() => {
+        if (!recoveryConnectionId || !recoveryTaskId || recoveryTerminal) return;
+        let disposed = false;
+        const verify = async () => {
+            if (verifying.current) return;
+            verifying.current = true;
+            try {
+                const r = await fetch("/api/service-review-center/operations", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            action: "verify-workflow",
+                            connectionId: recoveryConnectionId,
+                            taskId: recoveryTaskId,
+                        }),
+                        signal: AbortSignal.timeout(20000),
+                    }),
+                    b = await r.json();
+                if (!disposed) {
+                    if (!r.ok)
+                        setMessage(
+                            "Verification is delayed. " + (b.error || "Check source availability."),
+                        );
+                    else {
+                        setRecovery((previous) =>
+                            previous
+                                ? {
+                                      ...previous,
+                                      terminal: b.terminal,
+                                      verified: b.verified,
+                                      message: b.message,
+                                  }
+                                : null,
+                        );
+                        await reload();
+                    }
+                }
+            } catch {
+                if (!disposed)
+                    setMessage(
+                        "Verification is delayed. The workflow may still be running; do not start another retry.",
+                    );
+            } finally {
+                verifying.current = false;
+            }
+        };
+        const timer = setInterval(() => void verify(), 5000);
+        void verify();
+        return () => {
+            disposed = true;
+            clearInterval(timer);
+        };
+    }, [recoveryConnectionId, recoveryTaskId, recoveryTerminal, reload]);
+    async function recover(body: Record<string, unknown>) {
+        if (busy) return;
+        setBusy(true);
+        setMessage("");
+        try {
+            const r = await fetch("/api/service-review-center/operations", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ ...body, requestKey: crypto.randomUUID() }),
+                    signal: AbortSignal.timeout(90000),
+                }),
+                b = await r.json();
+            if (!r.ok) throw new Error(b.error);
+            setMessage(b.message);
+            if (b.pending && b.checkedAfter)
+                pendingSource.current = { id: String(body.connectionId), after: b.checkedAfter };
+            if (b.taskId)
+                setRecovery({
+                    connectionId: String(body.connectionId),
+                    taskId: String(b.taskId),
+                    terminal: false,
+                    verified: false,
+                    message: "Recovery started. Waiting for a verified result.",
+                });
+            setConfirm(null);
+            await reload();
+        } catch (e) {
+            setMessage(
+                e instanceof Error
+                    ? e.message
+                    : "Recovery failed. Check task history before retrying.",
+            );
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <section className="security-card">
+            <div className="security-card-heading">
+                <strong>Diagnosis & recovery</strong>
+                <button className="security-button" disabled={busy} onClick={() => void reload()}>
+                    Refresh status
+                </button>
+            </div>
+            {data && (
+                <p className="security-muted">
+                    Integration worker:{" "}
+                    {data.workers.integration.online ? "Online" : "Not responding"} · Scanner
+                    worker: {data.workers.security.online ? "Online" : "Not responding"}. Updates
+                    every 5 seconds.
+                </p>
+            )}
+            {error && <p role="alert">{error}</p>}
+            {!data && !error && <p>Checking operational records…</p>}
+            {recovery && (
+                <div className="security-alert" role="status">
+                    <strong>
+                        {recovery.verified
+                            ? "Recovery verified"
+                            : recovery.terminal
+                              ? "Recovery needs attention"
+                              : "Verifying recovery"}{" "}
+                        · task {recovery.taskId}
+                    </strong>
+                    <p>{recovery.message}</p>
+                </div>
+            )}
+            {message && (
+                <p className="mt-3" role="status">
+                    {message}
+                </p>
+            )}
+            {data?.connections.map((c) => (
+                <article key={c.id} className="security-alert">
+                    <strong>
+                        {c.name} ·{" "}
+                        {!c.enabled ? "Paused" : c.stale ? "Needs attention" : "Connected"}
+                    </strong>
+                    <p className="security-muted">Last checked: {operationalTime(c.checked_at)}</p>
+                    {(c.last_error || c.import_error) && (
+                        <>
+                            <p className="text-rose-700 mt-2">{c.last_error || c.import_error}</p>
+                            <p className="text-sm mt-2">
+                                {recoveryAdvice(c.last_error || c.import_error).nextStep}
+                            </p>
+                        </>
+                    )}
+                    <button
+                        className="security-button mt-2"
+                        disabled={busy || !c.enabled}
+                        onClick={() => void recover({ action: "refresh", connectionId: c.id })}
+                    >
+                        {busy ? "Checking…" : "Recheck & verify connection"}
+                    </button>
+                </article>
+            ))}
+            {!!data?.tasks.length && (
+                <p className="security-muted mt-4">
+                    Recorded workflow runs · historical results, not current server-health
+                    measurements.
+                </p>
+            )}
+            {data?.tasks.map((t) => (
+                <article key={t.connectionId + ":" + t.id} className="security-alert">
+                    <strong>{t.name}</strong>
+                    <p
+                        className={
+                            ["failed", "error"].includes(t.status)
+                                ? "text-rose-700"
+                                : "security-muted"
+                        }
+                    >
+                        {operationalStatus(t.status)} · task {t.id}
+                        {t.stale ? " · Last known" : ""}
+                    </p>
+                    <p className="security-muted">
+                        {t.eventAt ? "Run ended" : "Status recorded"}:{" "}
+                        {operationalTime(t.eventAt || t.observedAt)}
+                    </p>
+                    {t.error && (
+                        <>
+                            <p className="text-rose-700 mt-2">
+                                Cause: {t.error.split(". Install/configure")[0]}
+                            </p>
+                            <p className="text-sm mt-2">
+                                Next step: {recoveryAdvice(t.error).nextStep}
+                            </p>
+                        </>
+                    )}
+                    {t.output && (
+                        <details className="mt-3">
+                            <summary className="cursor-pointer text-sm text-indigo-600">
+                                View logs
+                            </summary>
+                            <pre className="mt-2 rounded-lg bg-slate-50 p-3 whitespace-pre-wrap break-words text-xs">
+                                {t.output}
+                            </pre>
+                        </details>
+                    )}
+                    {t.canRetry && (
+                        <div className="mt-3">
+                            {confirm === t.connectionId + ":" + t.id ? (
+                                <>
+                                    <p className="text-sm mb-2">
+                                        Rerun {t.name} in its configured environment? This can
+                                        change that environment. Existing permissions and
+                                        concurrency limits apply.
+                                    </p>
+                                    <button
+                                        className="security-button security-primary"
+                                        disabled={busy || (!!recovery && !recovery.terminal)}
+                                        onClick={() =>
+                                            void recover({
+                                                action: "retry-workflow",
+                                                connectionId: t.connectionId,
+                                                taskId: t.id,
+                                                confirmed: true,
+                                            })
+                                        }
+                                    >
+                                        Confirm retry & verify
+                                    </button>
+                                    <button
+                                        className="security-button ml-2"
+                                        disabled={busy}
+                                        onClick={() => setConfirm(null)}
+                                    >
+                                        Cancel
+                                    </button>
+                                </>
+                            ) : (
+                                <button
+                                    className="security-button"
+                                    disabled={busy || (!!recovery && !recovery.terminal)}
+                                    onClick={() => setConfirm(t.connectionId + ":" + t.id)}
+                                >
+                                    Review recovery
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </article>
+            ))}
+            {!!data?.events.length && (
+                <details className="mt-4">
+                    <summary className="cursor-pointer text-sm">Recent website activity</summary>
+                    {data.events.map((event) => (
+                        <article key={event.id} className="security-alert">
+                            <strong>
+                                {event.name} · {operationalStatus(event.status)}
+                            </strong>
+                            <p className="security-muted">{operationalTime(event.created_at)}</p>
+                            <p>{event.summary}</p>
+                            {event.href && (
+                                <a className="security-button" href={event.href}>
+                                    Inspect workflow
+                                </a>
+                            )}
+                        </article>
+                    ))}
+                </details>
+            )}
+            {data && !data.events.length && !data.connections.length && !data.tasks.length && (
+                <p className="security-muted mt-3">No connected source matches this request.</p>
+            )}
+            <p className="security-muted mt-3">
+                Connection rechecks are read-only. Workflow retries require confirmation and are
+                verified against the new run’s result. Missing software and credentials need
+                configuration before recovery.
+            </p>
+        </section>
+    );
 }

@@ -2,12 +2,240 @@
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RefreshCw, Search } from "lucide-react";
-type Item={id:string;name:string;category:string;configured:boolean;purpose:string;knowledge:{purpose?:string;limits?:string;operations?:{name:string;requiresApproval:boolean}[];lastCheck?:string;checkedAt?:string|null;integration?:string;operation?:string}|null;status:string};
+type Item = {
+    id: string;
+    name: string;
+    category: string;
+    configured: boolean;
+    purpose: string;
+    knowledge: {
+        purpose?: string;
+        limits?: string;
+        operations?: { name: string; requiresApproval: boolean }[];
+        lastCheck?: string;
+        checkedAt?: string | null;
+        integration?: string;
+        operation?: string;
+    } | null;
+    status: string;
+};
 export default function ToolLibraryKnowledge() {
- const retryAfter=useRef(0);
- const [data,setData]=useState<{items:Item[];checkedAt:string}|null>(null),[error,setError]=useState(""),[busy,setBusy]=useState(false),[search,setSearch]=useState("");
- const load=useCallback(async(signal?:AbortSignal)=>{setBusy(true);try{const r=await fetch("/api/tools/knowledge",{cache:"no-store",signal});const value=await r.json();if(!r.ok){if(r.status===429)retryAfter.current=Date.now()+Math.max(60,Number(r.headers.get("Retry-After"))||60)*1000;throw new Error(value.error);}setData(value);setError("");}catch(e){if(!signal?.aborted)setError(e instanceof Error?e.message:"Could not refresh tool knowledge.");}finally{if(!signal?.aborted)setBusy(false);}},[]);
- useEffect(()=>{const controller=new AbortController();let pending=false;const refresh=()=>{if(pending||Date.now()<retryAfter.current||document.visibilityState!=="visible")return;pending=true;void load(controller.signal).finally(()=>{pending=false;});};refresh();const timer=setInterval(refresh,15000);window.addEventListener("focus",refresh);window.addEventListener("integration-catalog-changed",refresh);window.addEventListener("project-tools-changed",refresh);return()=>{controller.abort();clearInterval(timer);window.removeEventListener("focus",refresh);window.removeEventListener("integration-catalog-changed",refresh);window.removeEventListener("project-tools-changed",refresh);};},[load]);
- const items=data?.items.filter(t=>`${t.name} ${t.purpose}`.toLowerCase().includes(search.toLowerCase()))||[];
- return <div className="mb-8 space-y-6"><section className="rounded-2xl border border-purple-100 bg-purple-50/30 p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="text-sm font-semibold text-[#6550ed]">Tool Library knowledge</h2><p className="mt-2 max-w-3xl text-xs leading-5 text-slate-500">Your integrations and project tools, synchronized from Tool Library. Unconfigured entries have NULL knowledge. Credentials and private API responses are excluded.</p></div><div className="flex items-center gap-3"><Link href="/dashboard/tools" className="text-xs font-semibold text-[#6255e8]">Configure tools →</Link><button aria-label="Refresh tool knowledge" disabled={busy} onClick={()=>void load()} className="rounded-xl border border-purple-100 bg-white p-3 text-[#6255e8] disabled:opacity-50"><RefreshCw className={`size-4 ${busy?"animate-spin":""}`}/></button></div></div>{error&&<p role="alert" className="mt-3 rounded-xl bg-rose-50 p-3 text-xs text-rose-700">{error}</p>}{!data&&!error&&<p className="mt-4 text-xs text-slate-500">Loading Tool Library knowledge…</p>}{data&&<><div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[10px] text-slate-500"><span>{data.items.length} entries · {data.items.filter(t=>t.configured).length} configured/enabled · {data.items.filter(t=>!t.configured).length} NULL</span><span>Updated {new Date(data.checkedAt).toLocaleString()} · refreshes while this page is open</span></div><label className="mt-4 flex items-center gap-2 rounded-xl border border-purple-100 bg-white px-3"><Search className="size-4 text-slate-400"/><input aria-label="Search tool knowledge" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search integrations and project tools…" className="h-10 w-full bg-transparent text-xs outline-none"/></label></>}</section>{data&&<>{["Integrations","Project tools"].map(category=><section key={category} aria-label={`${category} knowledge`} className="overflow-hidden rounded-2xl border border-[#e6e2f4] bg-white shadow-[0_4px_20px_#25326206]"><div className="flex items-center justify-between gap-3 border-b border-[#eeebf7] bg-[#faf9ff] px-5 py-4"><div><h2 className="text-sm font-semibold text-[#6550ed]">{category}</h2><p className="mt-1 text-[11px] text-slate-500">{category==="Project tools"?"Workspace capabilities and reusable tool bindings.":"Connected services and API integrations."}</p></div><span className="shrink-0 rounded-full border border-purple-100 bg-white px-3 py-1.5 text-[10px] text-slate-500">{items.filter(t=>t.category===category).length} tools</span></div><div tabIndex={0} role="region" aria-label={`Scroll ${category.toLowerCase()} knowledge`} className="grid max-h-[480px] gap-3 overflow-y-auto p-5 sm:grid-cols-2">{items.filter(t=>t.category===category).map(t=><article key={t.id} className="rounded-xl border border-purple-100 bg-white p-4"><div className="flex items-start justify-between gap-3"><h4 className="text-xs font-semibold text-slate-800">{t.name}</h4><span className={`shrink-0 rounded-full px-2 py-1 text-[10px] ${t.configured?"bg-emerald-50 text-emerald-700":"bg-slate-100 text-slate-500"}`}>{t.configured?"Available metadata":"NULL"}</span></div><p className="mt-2 text-xs leading-5 text-slate-500">{t.purpose}</p><p className={`mt-3 text-[11px] leading-5 ${t.configured?"text-slate-500":"text-amber-700"}`}>{t.status}</p>{t.knowledge?.limits&&<details className="mt-3 text-[11px] leading-5 text-slate-500"><summary className="cursor-pointer text-[#6255e8]">Capability limits</summary>{t.knowledge.limits}</details>}{t.knowledge?.operations&&<p className="mt-3 text-[10px] leading-5 text-slate-500">{t.knowledge.operations.map(o=>`${o.name}${o.requiresApproval?" (approval required)":""}`).join(" · ")}</p>}{t.knowledge?.lastCheck&&<p className="mt-2 text-[10px] text-slate-400">Last read check: {t.knowledge.lastCheck}{t.knowledge.checkedAt?` · ${new Date(t.knowledge.checkedAt).toLocaleString()}`:""}</p>}</article>)}</div>{!items.some(t=>t.category===category)&&<p className="mt-3 text-xs text-slate-500">No matching entries.</p>}</section>)}</>}</div>;
+    const retryAfter = useRef(0);
+    const [data, setData] = useState<{ items: Item[]; checkedAt: string } | null>(null),
+        [error, setError] = useState(""),
+        [busy, setBusy] = useState(false),
+        [search, setSearch] = useState("");
+    const load = useCallback(async (signal?: AbortSignal) => {
+        setBusy(true);
+        try {
+            const r = await fetch("/api/tools/knowledge", { cache: "no-store", signal });
+            const value = await r.json();
+            if (!r.ok) {
+                if (r.status === 429)
+                    retryAfter.current =
+                        Date.now() +
+                        Math.max(60, Number(r.headers.get("Retry-After")) || 60) * 1000;
+                throw new Error(value.error);
+            }
+            setData(value);
+            setError("");
+        } catch (e) {
+            if (!signal?.aborted)
+                setError(e instanceof Error ? e.message : "Could not refresh tool knowledge.");
+        } finally {
+            if (!signal?.aborted) setBusy(false);
+        }
+    }, []);
+    useEffect(() => {
+        const controller = new AbortController();
+        let pending = false;
+        const refresh = () => {
+            if (
+                pending ||
+                Date.now() < retryAfter.current ||
+                document.visibilityState !== "visible"
+            )
+                return;
+            pending = true;
+            void load(controller.signal).finally(() => {
+                pending = false;
+            });
+        };
+        refresh();
+        const timer = setInterval(refresh, 15000);
+        window.addEventListener("focus", refresh);
+        window.addEventListener("integration-catalog-changed", refresh);
+        window.addEventListener("project-tools-changed", refresh);
+        return () => {
+            controller.abort();
+            clearInterval(timer);
+            window.removeEventListener("focus", refresh);
+            window.removeEventListener("integration-catalog-changed", refresh);
+            window.removeEventListener("project-tools-changed", refresh);
+        };
+    }, [load]);
+    const items =
+        data?.items.filter((t) =>
+            `${t.name} ${t.purpose}`.toLowerCase().includes(search.toLowerCase()),
+        ) || [];
+    return (
+        <div className="mb-8 space-y-6">
+            <section className="rounded-2xl border border-purple-100 bg-purple-50/30 p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                        <h2 className="text-sm font-semibold text-[#6550ed]">
+                            Tool Library knowledge
+                        </h2>
+                        <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-500">
+                            Your integrations and project tools, synchronized from Tool Library.
+                            Unconfigured entries have NULL knowledge. Credentials and private API
+                            responses are excluded.
+                        </p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <Link
+                            href="/dashboard/tools"
+                            className="text-xs font-semibold text-[#6255e8]"
+                        >
+                            Configure tools →
+                        </Link>
+                        <button
+                            aria-label="Refresh tool knowledge"
+                            disabled={busy}
+                            onClick={() => void load()}
+                            className="rounded-xl border border-purple-100 bg-white p-3 text-[#6255e8] disabled:opacity-50"
+                        >
+                            <RefreshCw className={`size-4 ${busy ? "animate-spin" : ""}`} />
+                        </button>
+                    </div>
+                </div>
+                {error && (
+                    <p
+                        role="alert"
+                        className="mt-3 rounded-xl bg-rose-50 p-3 text-xs text-rose-700"
+                    >
+                        {error}
+                    </p>
+                )}
+                {!data && !error && (
+                    <p className="mt-4 text-xs text-slate-500">Loading Tool Library knowledge…</p>
+                )}
+                {data && (
+                    <>
+                        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 text-[10px] text-slate-500">
+                            <span>
+                                {data.items.length} entries ·{" "}
+                                {data.items.filter((t) => t.configured).length} configured/enabled ·{" "}
+                                {data.items.filter((t) => !t.configured).length} NULL
+                            </span>
+                            <span>
+                                Updated {new Date(data.checkedAt).toLocaleString()} · refreshes
+                                while this page is open
+                            </span>
+                        </div>
+                        <label className="mt-4 flex items-center gap-2 rounded-xl border border-purple-100 bg-white px-3">
+                            <Search className="size-4 text-slate-400" />
+                            <input
+                                aria-label="Search tool knowledge"
+                                value={search}
+                                onChange={(e) => setSearch(e.target.value)}
+                                placeholder="Search integrations and project tools…"
+                                className="h-10 w-full bg-transparent text-xs outline-none"
+                            />
+                        </label>
+                    </>
+                )}
+            </section>
+            {data && (
+                <>
+                    {["Integrations", "Project tools"].map((category) => (
+                        <section
+                            key={category}
+                            aria-label={`${category} knowledge`}
+                            className="overflow-hidden rounded-2xl border border-[#e6e2f4] bg-white shadow-[0_4px_20px_#25326206]"
+                        >
+                            <div className="flex items-center justify-between gap-3 border-b border-[#eeebf7] bg-[#faf9ff] px-5 py-4">
+                                <div>
+                                    <h2 className="text-sm font-semibold text-[#6550ed]">
+                                        {category}
+                                    </h2>
+                                    <p className="mt-1 text-[11px] text-slate-500">
+                                        {category === "Project tools"
+                                            ? "Workspace capabilities and reusable tool bindings."
+                                            : "Connected services and API integrations."}
+                                    </p>
+                                </div>
+                                <span className="shrink-0 rounded-full border border-purple-100 bg-white px-3 py-1.5 text-[10px] text-slate-500">
+                                    {items.filter((t) => t.category === category).length} tools
+                                </span>
+                            </div>
+                            <div
+                                tabIndex={0}
+                                role="region"
+                                aria-label={`Scroll ${category.toLowerCase()} knowledge`}
+                                className="grid max-h-[480px] gap-3 overflow-y-auto p-5 sm:grid-cols-2"
+                            >
+                                {items
+                                    .filter((t) => t.category === category)
+                                    .map((t) => (
+                                        <article
+                                            key={t.id}
+                                            className="rounded-xl border border-purple-100 bg-white p-4"
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <h4 className="text-xs font-semibold text-slate-800">
+                                                    {t.name}
+                                                </h4>
+                                                <span
+                                                    className={`shrink-0 rounded-full px-2 py-1 text-[10px] ${t.configured ? "bg-emerald-50 text-emerald-700" : "bg-slate-100 text-slate-500"}`}
+                                                >
+                                                    {t.configured ? "Available metadata" : "NULL"}
+                                                </span>
+                                            </div>
+                                            <p className="mt-2 text-xs leading-5 text-slate-500">
+                                                {t.purpose}
+                                            </p>
+                                            <p
+                                                className={`mt-3 text-[11px] leading-5 ${t.configured ? "text-slate-500" : "text-amber-700"}`}
+                                            >
+                                                {t.status}
+                                            </p>
+                                            {t.knowledge?.limits && (
+                                                <details className="mt-3 text-[11px] leading-5 text-slate-500">
+                                                    <summary className="cursor-pointer text-[#6255e8]">
+                                                        Capability limits
+                                                    </summary>
+                                                    {t.knowledge.limits}
+                                                </details>
+                                            )}
+                                            {t.knowledge?.operations && (
+                                                <p className="mt-3 text-[10px] leading-5 text-slate-500">
+                                                    {t.knowledge.operations
+                                                        .map(
+                                                            (o) =>
+                                                                `${o.name}${o.requiresApproval ? " (approval required)" : ""}`,
+                                                        )
+                                                        .join(" · ")}
+                                                </p>
+                                            )}
+                                            {t.knowledge?.lastCheck && (
+                                                <p className="mt-2 text-[10px] text-slate-400">
+                                                    Last read check: {t.knowledge.lastCheck}
+                                                    {t.knowledge.checkedAt
+                                                        ? ` · ${new Date(t.knowledge.checkedAt).toLocaleString()}`
+                                                        : ""}
+                                                </p>
+                                            )}
+                                        </article>
+                                    ))}
+                            </div>
+                            {!items.some((t) => t.category === category) && (
+                                <p className="mt-3 text-xs text-slate-500">No matching entries.</p>
+                            )}
+                        </section>
+                    ))}
+                </>
+            )}
+        </div>
+    );
 }

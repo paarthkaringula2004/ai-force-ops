@@ -1,10 +1,152 @@
 "use client";
-import {useEffect,useState} from 'react';
-type Review={id:string;kind:string;customer:string;mode:string;refunded_amount:number;refund_adjusted_tickets:number;granted:number;amount:number};
-export default function PaymentRefundReview(){
- const [rows,setRows]=useState<Review[]>([]),[selected,setSelected]=useState<Review|null>(null),[error,setError]=useState(''),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
- async function refresh(){try{const r=await fetch('/api/payments/review',{cache:'no-store'}),d=await r.json();if(!r.ok)throw Error(d.error);setRows(d.reviews);}catch(e){setError(e instanceof Error?e.message:'Refund review unavailable.');}}
- useEffect(()=>{const abort=new AbortController();fetch('/api/payments/review',{signal:abort.signal,cache:'no-store'}).then(async r=>{const d=await r.json();if(!r.ok)throw Error(d.error);setRows(d.reviews);}).catch(e=>{if(!abort.signal.aborted)setError(e instanceof Error?e.message:'Refund review unavailable.');});return()=>abort.abort();},[]);
- async function resolve(){if(!selected)return;setBusy(true);setError('');try{const r=await fetch('/api/payments/review',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({id:selected.id,kind:selected.kind,refundedAmount:selected.refunded_amount,confirm:true})}),d=await r.json();if(!r.ok)throw Error(d.error);setNotice(`Refund reconciled. ${d.ticketsDebited} tickets removed; no money was sent.`);setSelected(null);await refresh();}catch(e){setError(e instanceof Error?e.message:'Refund could not be resolved.');}finally{setBusy(false);}}
- return <section className="rounded-2xl border border-[#e7e9ef] bg-white p-5"><div className="flex justify-between gap-3"><h3 className="font-semibold">Organization refund review</h3><button className="text-sm text-[#6255e8]" disabled={busy} onClick={()=>void refresh()}>Refresh reviews</button></div><p className="mt-2 text-xs leading-6 text-slate-500">Refund money through Razorpay. This queue verifies the provider refund and adjusts already granted tickets. Spending is held while an account has an unresolved Live refund. Any membership refund stops future rewards for that cycle.</p>{error&&<p role="alert" className="my-3 text-sm text-rose-700">{error}</p>}{notice&&<p role="status" className="my-3 text-sm text-emerald-700">{notice}</p>}<div className="mt-3 space-y-2">{rows.length?rows.map(row=><div key={row.id} className="flex flex-wrap justify-between gap-3 rounded-xl border border-[#e7e9ef] p-3 text-sm"><span>{row.customer} · {row.kind} · {row.mode} · ₹{(row.refunded_amount/100).toFixed(2)} refunded</span><button className="text-[#6255e8]" onClick={()=>setSelected(row)}>Review adjustment</button></div>):<p className="text-sm text-slate-500">No refunds awaiting review.</p>}</div>{selected&&<div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm"><p>Remove {selected.mode==='test'?0:Math.max(0,Math.ceil(selected.granted*selected.refunded_amount/selected.amount)-selected.refund_adjusted_tickets)} tickets from {selected.customer} for the verified ₹{(selected.refunded_amount/100).toFixed(2)} refund?</p><p className="mt-2 text-xs">Reference: {selected.id}. The server rechecks the refund and available balance. This action does not issue a monetary refund.</p><div className="mt-3 flex gap-4"><button disabled={busy} onClick={()=>void resolve()} className="rounded-lg bg-[#6255e8] px-3 py-2 text-white">Confirm ticket adjustment</button><button disabled={busy} onClick={()=>setSelected(null)}>Cancel</button></div></div>}</section>;
+import { useEffect, useState } from "react";
+type Review = {
+    id: string;
+    kind: string;
+    customer: string;
+    mode: string;
+    refunded_amount: number;
+    refund_adjusted_tickets: number;
+    granted: number;
+    amount: number;
+};
+export default function PaymentRefundReview() {
+    const [rows, setRows] = useState<Review[]>([]),
+        [selected, setSelected] = useState<Review | null>(null),
+        [error, setError] = useState(""),
+        [busy, setBusy] = useState(false),
+        [notice, setNotice] = useState("");
+    async function refresh() {
+        try {
+            const r = await fetch("/api/payments/review", { cache: "no-store" }),
+                d = await r.json();
+            if (!r.ok) throw Error(d.error);
+            setRows(d.reviews);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Refund review unavailable.");
+        }
+    }
+    useEffect(() => {
+        const abort = new AbortController();
+        fetch("/api/payments/review", { signal: abort.signal, cache: "no-store" })
+            .then(async (r) => {
+                const d = await r.json();
+                if (!r.ok) throw Error(d.error);
+                setRows(d.reviews);
+            })
+            .catch((e) => {
+                if (!abort.signal.aborted)
+                    setError(e instanceof Error ? e.message : "Refund review unavailable.");
+            });
+        return () => abort.abort();
+    }, []);
+    async function resolve() {
+        if (!selected) return;
+        setBusy(true);
+        setError("");
+        try {
+            const r = await fetch("/api/payments/review", {
+                    method: "POST",
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify({
+                        id: selected.id,
+                        kind: selected.kind,
+                        refundedAmount: selected.refunded_amount,
+                        confirm: true,
+                    }),
+                }),
+                d = await r.json();
+            if (!r.ok) throw Error(d.error);
+            setNotice(`Refund reconciled. ${d.ticketsDebited} tickets removed; no money was sent.`);
+            setSelected(null);
+            await refresh();
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Refund could not be resolved.");
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <section className="rounded-2xl border border-[#e7e9ef] bg-white p-5">
+            <div className="flex justify-between gap-3">
+                <h3 className="font-semibold">Organization refund review</h3>
+                <button
+                    className="text-sm text-[#6255e8]"
+                    disabled={busy}
+                    onClick={() => void refresh()}
+                >
+                    Refresh reviews
+                </button>
+            </div>
+            <p className="mt-2 text-xs leading-6 text-slate-500">
+                Refund money through Razorpay. This queue verifies the provider refund and adjusts
+                already granted tickets. Spending is held while an account has an unresolved Live
+                refund. Any membership refund stops future rewards for that cycle.
+            </p>
+            {error && (
+                <p role="alert" className="my-3 text-sm text-rose-700">
+                    {error}
+                </p>
+            )}
+            {notice && (
+                <p role="status" className="my-3 text-sm text-emerald-700">
+                    {notice}
+                </p>
+            )}
+            <div className="mt-3 space-y-2">
+                {rows.length ? (
+                    rows.map((row) => (
+                        <div
+                            key={row.id}
+                            className="flex flex-wrap justify-between gap-3 rounded-xl border border-[#e7e9ef] p-3 text-sm"
+                        >
+                            <span>
+                                {row.customer} · {row.kind} · {row.mode} · ₹
+                                {(row.refunded_amount / 100).toFixed(2)} refunded
+                            </span>
+                            <button className="text-[#6255e8]" onClick={() => setSelected(row)}>
+                                Review adjustment
+                            </button>
+                        </div>
+                    ))
+                ) : (
+                    <p className="text-sm text-slate-500">No refunds awaiting review.</p>
+                )}
+            </div>
+            {selected && (
+                <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm">
+                    <p>
+                        Remove{" "}
+                        {selected.mode === "test"
+                            ? 0
+                            : Math.max(
+                                  0,
+                                  Math.ceil(
+                                      (selected.granted * selected.refunded_amount) /
+                                          selected.amount,
+                                  ) - selected.refund_adjusted_tickets,
+                              )}{" "}
+                        tickets from {selected.customer} for the verified ₹
+                        {(selected.refunded_amount / 100).toFixed(2)} refund?
+                    </p>
+                    <p className="mt-2 text-xs">
+                        Reference: {selected.id}. The server rechecks the refund and available
+                        balance. This action does not issue a monetary refund.
+                    </p>
+                    <div className="mt-3 flex gap-4">
+                        <button
+                            disabled={busy}
+                            onClick={() => void resolve()}
+                            className="rounded-lg bg-[#6255e8] px-3 py-2 text-white"
+                        >
+                            Confirm ticket adjustment
+                        </button>
+                        <button disabled={busy} onClick={() => setSelected(null)}>
+                            Cancel
+                        </button>
+                    </div>
+                </div>
+            )}
+        </section>
+    );
 }

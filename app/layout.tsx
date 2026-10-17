@@ -4,33 +4,36 @@ import "./globals.css";
 import OperationsMonitor from "@/components/operations-monitor";
 
 const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
+    variable: "--font-geist-sans",
+    subsets: ["latin"],
 });
 
 const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
+    variable: "--font-geist-mono",
+    subsets: ["latin"],
 });
 
 export const metadata: Metadata = {
-  title: {
-    default: "AIForce.Ops | Service Review Center",
-    template: "%s | AIForce.Ops",
-  },
-  description:
-    "AIForce.Ops brings service operations, AI workflows, and business value into one review center.",
+    title: {
+        default: "AIForce.Ops | Service Review Center",
+        template: "%s | AIForce.Ops",
+    },
+    description:
+        "AIForce.Ops brings service operations, AI workflows, and business value into one review center.",
 };
 
 export const dynamic = "force-dynamic";
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
-  return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col"><OperationsMonitor />{children}</body>
-    </html>
-  );
+    return (
+        <html
+            lang="en"
+            className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+        >
+            <body className="min-h-full flex flex-col">
+                <OperationsMonitor />
+                {children}
+            </body>
+        </html>
+    );
 }

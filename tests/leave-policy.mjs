@@ -1,119 +1,405 @@
-import 'dotenv/config';
-import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
-import {createRequire} from 'node:module';
-import {randomUUID} from 'node:crypto';
-import ts from 'typescript';
-import pg from 'pg';
-const require=createRequire(import.meta.url);
-import {load} from './helpers/load-ts.mjs';
-const policy=load('lib/leave-policy.ts');
-const now=new Date('2026-10-11T12:35:00Z');
-assert.equal(policy.parseLeavePeriod('annual leave tomorrow, not feeling well',now).start,'2026-10-12');
-assert.equal(policy.parseLeavePeriod('tomorrow half day',now).days,0.5);
-assert.equal(policy.localLeaveDate(new Date('2026-10-11T20:00:00Z')),'2026-10-12');
-assert.equal(policy.parseLeavePeriod('at 4pm',now),null);
-assert.equal(policy.parseLeavePeriod('its absolutely a sick leave - I want that leave after 12th',now).start,'2026-10-13');
-assert.equal(policy.parseLeavePeriod('thats what I said after 12th thats 13th right!',now).start,'2026-10-13');
-assert.equal(policy.parseLeavePeriod('on the 13th half day',now).days,0.5);
-assert.equal(policy.parseLeavePeriod('after 31st',now).start,'2026-11-01');
-assert.equal(policy.parseLeavePeriod('31st',new Date('2026-11-11T12:00:00Z')),null);
-assert.equal(policy.parseLeavePeriod('the next day also',now,'2026-10-12').start,'2026-10-13');
-assert.equal(policy.parseLeavePeriod('doctor said minimum 2 days',now),null);
-assert.equal(policy.availablePaidLeave('2026-10','2026-11',{}),4);
-assert.equal(policy.availablePaidLeave('2026-10','2026-12',{'2026-10':1}),5);
-assert.equal(policy.availablePaidLeave('2026-10','2026-10',{'2026-11':4}),0);
-assert.equal(policy.availablePaidLeave('2026-10','2026-10',{'2026-11':2}),2);
-assert.equal(policy.availablePaidLeave('2026-10','2026-09',{}),0);
-assert.equal(policy.availablePaidLeave('2026-10','2026-10',{'2026-09':2}),2);
-assert.equal(policy.calculateLeaveDeduction({monthly_salary:30000,currency:'INR',deduction_basis:'calendar_days'},[{month:'2026-10',paid:0,unpaid:1}])[0].deduction,967.74);
-assert.equal(policy.calculateLeaveDeduction({monthly_salary:30000,currency:'INR',deduction_basis:'fixed_30'},[{month:'2026-10',paid:0,unpaid:1}])[0].deduction,1000);
-console.log('PASS: natural dates, timezone, half days, carry-forward, future reservations and configurable deduction formulas.');
-const mail={'./mail-events':{queueLeaveEvent:async()=>{}},'./mail':{mailConfigured:()=>false},'./leave-policy':policy};
-const {leaveConversation}=load('lib/leave-conversation.ts',mail);
-assert.equal(await leaveConversation({},'test','Test','Did my manager approve my vacation?',{active:true}),null);
-const {decideRequestInTransaction}=load('lib/workspace-decisions.ts',mail);
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:1});
-const client=await pool.connect();
-try{
- await client.query('BEGIN');
- await client.query('SELECT pg_advisory_xact_lock(8470220029)');
- const month=policy.localLeaveDate().slice(0,7);
- await client.query('UPDATE leave_policy_settings SET effective_month=$1::date WHERE id=1',[month+'-01']);
- const employee=randomUUID(),manager=randomUUID(),admin=randomUUID();
- for(const [id,role] of [[employee,'employee'],[manager,'manager'],[admin,'admin']]){
-  await client.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',[id,`Leave test ${role}`,`${id}@example.invalid`]);
-  await client.query('UPDATE workspace_members SET role=$2 WHERE user_id=$1',[id,role]);
- }
- await client.query('UPDATE workspace_members SET manager_id=$2 WHERE user_id=$1',[employee,manager]);
- await client.query("INSERT INTO workspace_salaries(user_id,monthly_salary,currency,deduction_basis,updated_by) VALUES($1,30000,'INR','fixed_30',$2)",[employee,manager]);
- const member={user_id:employee,role:'employee',active:true,manager_id:manager,manager_name:'Leave test manager',department:'Test',employee_id:'',permissions:[]};
- const tomorrow=policy.parseLeavePeriod('tomorrow').start;
- let result=await leaveConversation(client,employee,'Leave test employee','Annual leave tomorrow because I am not feeling well',member);
- assert.match(result.reply,/Mail preview/);assert.match(result.reply,/Paid days:\*\* 1/);assert.match(result.reply,new RegExp(tomorrow));
- async function confirm(){const current=(await client.query('SELECT draft FROM employee_playground_drafts WHERE user_id=$1',[employee])).rows[0]?.draft;return leaveConversation(client,employee,'Leave test employee','Confirm leave',member,current);}
- result=await confirm();assert.match(result.reply,/paid leave is approved/);
- const approved=(await client.query('SELECT * FROM employee_service_requests WHERE user_id=$1',[employee])).rows[0];
- // An additional recovery day anchors to the employee's existing upcoming leave.
- result=await leaveConversation(client,employee,'Leave test employee','Doctor said to rest minimum 2 days so I want leave the next day also',member);
- assert.match(result.reply,/Mail preview/);assert.match(result.reply,/Sick leave/);
- let recovery=(await client.query('SELECT draft FROM employee_playground_drafts WHERE user_id=$1',[employee])).rows[0].draft;
- const nextDay=new Date(tomorrow+'T12:00:00Z');nextDay.setUTCDate(nextDay.getUTCDate()+1);
- assert.equal(recovery.fields.leaveStart,nextDay.toISOString().slice(0,10));
- assert.equal(recovery.fields.leaveDays,'1');
- // Explicit sick-leave corrections override a previously selected annual type.
- recovery.fields.type='Annual leave';
- result=await leaveConversation(client,employee,'Leave test employee','its absolutely sick leave',member,recovery);
- assert.match(result.reply,/Sick leave/);
- result=await confirm();assert.match(result.reply,/paid leave is approved/);
- const second=(await client.query("SELECT * FROM employee_service_requests WHERE user_id=$1 AND id<>$2 ORDER BY created_at DESC,updated_at DESC LIMIT 1",[employee,approved.id])).rows[0];
- // now() is identical inside this test transaction; make request chronology explicit.
- await client.query("UPDATE employee_service_requests SET created_at=created_at+interval '1 second' WHERE id=$1",[second.id]);
- const thirdDay=new Date(nextDay);thirdDay.setUTCDate(thirdDay.getUTCDate()+1);
- const followup=`And I also want leave at ${thirdDay.getUTCDate()}th same reason`;
- result=await leaveConversation(client,employee,'Leave test employee',followup,member);
- assert.match(result.reply,/Mail preview/);assert.match(result.reply,/Sick leave/);assert.match(result.reply,/Unpaid days:\*\* 1/);
- let continued=(await client.query('SELECT draft FROM employee_playground_drafts WHERE user_id=$1',[employee])).rows[0].draft;
- assert.equal(continued.fields.leaveStart,thirdDay.toISOString().slice(0,10));
- assert.equal(continued.fields.reason,second.details.reason);
- const aiIntent={mode:'leave',type:'Sick leave',start:thirdDay.toISOString().slice(0,10),end:thirdDay.toISOString().slice(0,10),halfDay:false,reason:second.details.reason,question:null};
- result=await leaveConversation(client,employee,'Leave test employee','I need another day to recover as discussed',member,continued,aiIntent);
- assert.match(result.reply,/Sick leave/);assert.match(result.reply,/Unpaid days:\*\* 1/);
- const countBefore=Number((await client.query('SELECT count(*) FROM employee_service_requests WHERE user_id=$1',[employee])).rows[0].count);
- result=await leaveConversation(client,employee,'Leave test employee',"Don't confirm it",member,continued,{...aiIntent,mode:'confirm'});
- assert.match(result.reply,/Nothing has been submitted/);
- assert.equal(Number((await client.query('SELECT count(*) FROM employee_service_requests WHERE user_id=$1',[employee])).rows[0].count),countBefore);
- assert.notEqual(continued.id,second.id);
- result=await leaveConversation(client,employee,'Leave test employee',followup,member,continued);
- assert.match(result.reply,/Mail preview/);assert.doesNotMatch(result.reply,/Which leave type/);
- continued=(await client.query('SELECT draft FROM employee_playground_drafts WHERE user_id=$1',[employee])).rows[0].draft;
- assert.equal(continued.fields.reason,second.details.reason);
- assert.equal(Number((await client.query('SELECT count(*) FROM employee_service_requests WHERE user_id=$1',[employee])).rows[0].count),2);
- await decideRequestInTransaction(client,employee,{id:second.id,action:'cancel',note:''});
- await client.query('DELETE FROM employee_playground_drafts WHERE user_id=$1',[employee]);
- await assert.rejects(()=>decideRequestInTransaction(client,employee,{id:approved.id,action:'amend_leave',note:'Self review'}),/Self-approval/);
- await decideRequestInTransaction(client,employee,{id:approved.id,action:'cancel',note:''});
- assert.equal(policy.availablePaidLeave(month,month,(await policy.leaveUsage(client,employee)).used),2);
- // A future four-day booking spends both this month's carry and next month's accrual.
- const next=new Date(month+'-01T12:00:00Z');next.setUTCMonth(next.getUTCMonth()+1);const future=next.toISOString().slice(0,7);
- const futurePeriod={start:future+'-10',end:future+'-13',days:4,halfDay:false};
- const allocation=await policy.allocateLeave(client,employee,futurePeriod);
- assert.equal(allocation.allocations[0].paid,4);
- const reserved=randomUUID();
- await client.query("INSERT INTO employee_service_requests(id,user_id,request_number,kind,details,status) VALUES($1,$2,$3,'leave',$4::jsonb,'approved')",[reserved,employee,'REQ-'+reserved.slice(0,8),JSON.stringify({dates:policy.leaveDates(futurePeriod),leaveAllocations:JSON.stringify(allocation.allocations)})]);
- assert.equal((await policy.allocateLeave(client,employee,{start:tomorrow,end:tomorrow,days:1,halfDay:false})).allocations[0].paid,0);
- result=await leaveConversation(client,employee,'Leave test employee','Annual leave tomorrow',member);assert.match(result.reply,/Unpaid days:\*\* 1/);
- result=await confirm();assert.match(result.reply,/submitted for review/);
- const pending=(await client.query("SELECT * FROM employee_service_requests WHERE user_id=$1 AND status='pending_approval'",[employee])).rows[0];
- await decideRequestInTransaction(client,manager,{id:pending.id,action:'approve',note:'Coverage arranged'});
- let details=(await client.query('SELECT details FROM employee_service_requests WHERE id=$1',[pending.id])).rows[0].details;
- assert.equal(JSON.parse(details.payrollDeduction)[0].deduction,1000);
- await decideRequestInTransaction(client,manager,{id:pending.id,action:'amend_leave',note:'Grant company paid exception',payTreatment:'paid'});
- details=(await client.query('SELECT details FROM employee_service_requests WHERE id=$1',[pending.id])).rows[0].details;
- assert.equal(details.unpaidDays,'0');assert.equal(JSON.parse(details.leaveAllocations)[0].entitlementPaid,0);
- const managerRequest=randomUUID();
- await client.query("INSERT INTO employee_service_requests(id,user_id,request_number,kind,details,status) VALUES($1,$2,$3,'leave',$4::jsonb,'pending_approval')",[managerRequest,manager,'REQ-'+managerRequest.slice(0,8),JSON.stringify({dates:policy.leaveDates(futurePeriod),leaveAllocations:JSON.stringify([{month:future,paid:1,unpaid:0,entitlementPaid:1}])})]);
- await assert.rejects(()=>decideRequestInTransaction(client,manager,{id:managerRequest,action:'approve',note:''}),/Self-approval/);
- await decideRequestInTransaction(client,admin,{id:managerRequest,action:'approve',note:'Admin review'});
- console.log('PASS: database preview/confirmation, automatic approval, cancellation restores balance, future carry reservations, unpaid deduction, paid exception and Admin review of Manager leave. All fixtures rolled back; no email sent.');
-}finally{await client.query('ROLLBACK');client.release();await pool.end();}
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
+import ts from "typescript";
+import pg from "pg";
+const require = createRequire(import.meta.url);
+import { load } from "./helpers/load-ts.mjs";
+const policy = load("lib/leave-policy.ts");
+const now = new Date("2026-10-11T12:35:00Z");
+assert.equal(
+    policy.parseLeavePeriod("annual leave tomorrow, not feeling well", now).start,
+    "2026-10-12",
+);
+assert.equal(policy.parseLeavePeriod("tomorrow half day", now).days, 0.5);
+assert.equal(policy.localLeaveDate(new Date("2026-10-11T20:00:00Z")), "2026-10-12");
+assert.equal(policy.parseLeavePeriod("at 4pm", now), null);
+assert.equal(
+    policy.parseLeavePeriod("its absolutely a sick leave - I want that leave after 12th", now)
+        .start,
+    "2026-10-13",
+);
+assert.equal(
+    policy.parseLeavePeriod("thats what I said after 12th thats 13th right!", now).start,
+    "2026-10-13",
+);
+assert.equal(policy.parseLeavePeriod("on the 13th half day", now).days, 0.5);
+assert.equal(policy.parseLeavePeriod("after 31st", now).start, "2026-11-01");
+assert.equal(policy.parseLeavePeriod("31st", new Date("2026-11-11T12:00:00Z")), null);
+assert.equal(policy.parseLeavePeriod("the next day also", now, "2026-10-12").start, "2026-10-13");
+assert.equal(policy.parseLeavePeriod("doctor said minimum 2 days", now), null);
+assert.equal(policy.availablePaidLeave("2026-10", "2026-11", {}), 4);
+assert.equal(policy.availablePaidLeave("2026-10", "2026-12", { "2026-10": 1 }), 5);
+assert.equal(policy.availablePaidLeave("2026-10", "2026-10", { "2026-11": 4 }), 0);
+assert.equal(policy.availablePaidLeave("2026-10", "2026-10", { "2026-11": 2 }), 2);
+assert.equal(policy.availablePaidLeave("2026-10", "2026-09", {}), 0);
+assert.equal(policy.availablePaidLeave("2026-10", "2026-10", { "2026-09": 2 }), 2);
+assert.equal(
+    policy.calculateLeaveDeduction(
+        { monthly_salary: 30000, currency: "INR", deduction_basis: "calendar_days" },
+        [{ month: "2026-10", paid: 0, unpaid: 1 }],
+    )[0].deduction,
+    967.74,
+);
+assert.equal(
+    policy.calculateLeaveDeduction(
+        { monthly_salary: 30000, currency: "INR", deduction_basis: "fixed_30" },
+        [{ month: "2026-10", paid: 0, unpaid: 1 }],
+    )[0].deduction,
+    1000,
+);
+console.log(
+    "PASS: natural dates, timezone, half days, carry-forward, future reservations and configurable deduction formulas.",
+);
+const mail = {
+    "./mail-events": { queueLeaveEvent: async () => {} },
+    "./mail": { mailConfigured: () => false },
+    "./leave-policy": policy,
+};
+const { leaveConversation } = load("lib/leave-conversation.ts", mail);
+assert.equal(
+    await leaveConversation({}, "test", "Test", "Did my manager approve my vacation?", {
+        active: true,
+    }),
+    null,
+);
+const { decideRequestInTransaction } = load("lib/workspace-decisions.ts", mail);
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+const client = await pool.connect();
+try {
+    await client.query("BEGIN");
+    await client.query("SELECT pg_advisory_xact_lock(8470220029)");
+    const month = policy.localLeaveDate().slice(0, 7);
+    await client.query("UPDATE leave_policy_settings SET effective_month=$1::date WHERE id=1", [
+        month + "-01",
+    ]);
+    const employee = randomUUID(),
+        manager = randomUUID(),
+        admin = randomUUID();
+    for (const [id, role] of [
+        [employee, "employee"],
+        [manager, "manager"],
+        [admin, "admin"],
+    ]) {
+        await client.query(
+            'INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',
+            [id, `Leave test ${role}`, `${id}@example.invalid`],
+        );
+        await client.query("UPDATE workspace_members SET role=$2 WHERE user_id=$1", [id, role]);
+    }
+    await client.query("UPDATE workspace_members SET manager_id=$2 WHERE user_id=$1", [
+        employee,
+        manager,
+    ]);
+    await client.query(
+        "INSERT INTO workspace_salaries(user_id,monthly_salary,currency,deduction_basis,updated_by) VALUES($1,30000,'INR','fixed_30',$2)",
+        [employee, manager],
+    );
+    const member = {
+        user_id: employee,
+        role: "employee",
+        active: true,
+        manager_id: manager,
+        manager_name: "Leave test manager",
+        department: "Test",
+        employee_id: "",
+        permissions: [],
+    };
+    const tomorrow = policy.parseLeavePeriod("tomorrow").start;
+    let result = await leaveConversation(
+        client,
+        employee,
+        "Leave test employee",
+        "Annual leave tomorrow because I am not feeling well",
+        member,
+    );
+    assert.match(result.reply, /Mail preview/);
+    assert.match(result.reply, /Paid days:\*\* 1/);
+    assert.match(result.reply, new RegExp(tomorrow));
+    async function confirm() {
+        const current = (
+            await client.query("SELECT draft FROM employee_playground_drafts WHERE user_id=$1", [
+                employee,
+            ])
+        ).rows[0]?.draft;
+        return leaveConversation(
+            client,
+            employee,
+            "Leave test employee",
+            "Confirm leave",
+            member,
+            current,
+        );
+    }
+    result = await confirm();
+    assert.match(result.reply, /paid leave is approved/);
+    const approved = (
+        await client.query("SELECT * FROM employee_service_requests WHERE user_id=$1", [employee])
+    ).rows[0];
+    // An additional recovery day anchors to the employee's existing upcoming leave.
+    result = await leaveConversation(
+        client,
+        employee,
+        "Leave test employee",
+        "Doctor said to rest minimum 2 days so I want leave the next day also",
+        member,
+    );
+    assert.match(result.reply, /Mail preview/);
+    assert.match(result.reply, /Sick leave/);
+    let recovery = (
+        await client.query("SELECT draft FROM employee_playground_drafts WHERE user_id=$1", [
+            employee,
+        ])
+    ).rows[0].draft;
+    const nextDay = new Date(tomorrow + "T12:00:00Z");
+    nextDay.setUTCDate(nextDay.getUTCDate() + 1);
+    assert.equal(recovery.fields.leaveStart, nextDay.toISOString().slice(0, 10));
+    assert.equal(recovery.fields.leaveDays, "1");
+    // Explicit sick-leave corrections override a previously selected annual type.
+    recovery.fields.type = "Annual leave";
+    result = await leaveConversation(
+        client,
+        employee,
+        "Leave test employee",
+        "its absolutely sick leave",
+        member,
+        recovery,
+    );
+    assert.match(result.reply, /Sick leave/);
+    result = await confirm();
+    assert.match(result.reply, /paid leave is approved/);
+    const second = (
+        await client.query(
+            "SELECT * FROM employee_service_requests WHERE user_id=$1 AND id<>$2 ORDER BY created_at DESC,updated_at DESC LIMIT 1",
+            [employee, approved.id],
+        )
+    ).rows[0];
+    // now() is identical inside this test transaction; make request chronology explicit.
+    await client.query(
+        "UPDATE employee_service_requests SET created_at=created_at+interval '1 second' WHERE id=$1",
+        [second.id],
+    );
+    const thirdDay = new Date(nextDay);
+    thirdDay.setUTCDate(thirdDay.getUTCDate() + 1);
+    const followup = `And I also want leave at ${thirdDay.getUTCDate()}th same reason`;
+    result = await leaveConversation(client, employee, "Leave test employee", followup, member);
+    assert.match(result.reply, /Mail preview/);
+    assert.match(result.reply, /Sick leave/);
+    assert.match(result.reply, /Unpaid days:\*\* 1/);
+    let continued = (
+        await client.query("SELECT draft FROM employee_playground_drafts WHERE user_id=$1", [
+            employee,
+        ])
+    ).rows[0].draft;
+    assert.equal(continued.fields.leaveStart, thirdDay.toISOString().slice(0, 10));
+    assert.equal(continued.fields.reason, second.details.reason);
+    const aiIntent = {
+        mode: "leave",
+        type: "Sick leave",
+        start: thirdDay.toISOString().slice(0, 10),
+        end: thirdDay.toISOString().slice(0, 10),
+        halfDay: false,
+        reason: second.details.reason,
+        question: null,
+    };
+    result = await leaveConversation(
+        client,
+        employee,
+        "Leave test employee",
+        "I need another day to recover as discussed",
+        member,
+        continued,
+        aiIntent,
+    );
+    assert.match(result.reply, /Sick leave/);
+    assert.match(result.reply, /Unpaid days:\*\* 1/);
+    const countBefore = Number(
+        (
+            await client.query("SELECT count(*) FROM employee_service_requests WHERE user_id=$1", [
+                employee,
+            ])
+        ).rows[0].count,
+    );
+    result = await leaveConversation(
+        client,
+        employee,
+        "Leave test employee",
+        "Don't confirm it",
+        member,
+        continued,
+        { ...aiIntent, mode: "confirm" },
+    );
+    assert.match(result.reply, /Nothing has been submitted/);
+    assert.equal(
+        Number(
+            (
+                await client.query(
+                    "SELECT count(*) FROM employee_service_requests WHERE user_id=$1",
+                    [employee],
+                )
+            ).rows[0].count,
+        ),
+        countBefore,
+    );
+    assert.notEqual(continued.id, second.id);
+    result = await leaveConversation(
+        client,
+        employee,
+        "Leave test employee",
+        followup,
+        member,
+        continued,
+    );
+    assert.match(result.reply, /Mail preview/);
+    assert.doesNotMatch(result.reply, /Which leave type/);
+    continued = (
+        await client.query("SELECT draft FROM employee_playground_drafts WHERE user_id=$1", [
+            employee,
+        ])
+    ).rows[0].draft;
+    assert.equal(continued.fields.reason, second.details.reason);
+    assert.equal(
+        Number(
+            (
+                await client.query(
+                    "SELECT count(*) FROM employee_service_requests WHERE user_id=$1",
+                    [employee],
+                )
+            ).rows[0].count,
+        ),
+        2,
+    );
+    await decideRequestInTransaction(client, employee, {
+        id: second.id,
+        action: "cancel",
+        note: "",
+    });
+    await client.query("DELETE FROM employee_playground_drafts WHERE user_id=$1", [employee]);
+    await assert.rejects(
+        () =>
+            decideRequestInTransaction(client, employee, {
+                id: approved.id,
+                action: "amend_leave",
+                note: "Self review",
+            }),
+        /Self-approval/,
+    );
+    await decideRequestInTransaction(client, employee, {
+        id: approved.id,
+        action: "cancel",
+        note: "",
+    });
+    assert.equal(
+        policy.availablePaidLeave(month, month, (await policy.leaveUsage(client, employee)).used),
+        2,
+    );
+    // A future four-day booking spends both this month's carry and next month's accrual.
+    const next = new Date(month + "-01T12:00:00Z");
+    next.setUTCMonth(next.getUTCMonth() + 1);
+    const future = next.toISOString().slice(0, 7);
+    const futurePeriod = { start: future + "-10", end: future + "-13", days: 4, halfDay: false };
+    const allocation = await policy.allocateLeave(client, employee, futurePeriod);
+    assert.equal(allocation.allocations[0].paid, 4);
+    const reserved = randomUUID();
+    await client.query(
+        "INSERT INTO employee_service_requests(id,user_id,request_number,kind,details,status) VALUES($1,$2,$3,'leave',$4::jsonb,'approved')",
+        [
+            reserved,
+            employee,
+            "REQ-" + reserved.slice(0, 8),
+            JSON.stringify({
+                dates: policy.leaveDates(futurePeriod),
+                leaveAllocations: JSON.stringify(allocation.allocations),
+            }),
+        ],
+    );
+    assert.equal(
+        (
+            await policy.allocateLeave(client, employee, {
+                start: tomorrow,
+                end: tomorrow,
+                days: 1,
+                halfDay: false,
+            })
+        ).allocations[0].paid,
+        0,
+    );
+    result = await leaveConversation(
+        client,
+        employee,
+        "Leave test employee",
+        "Annual leave tomorrow",
+        member,
+    );
+    assert.match(result.reply, /Unpaid days:\*\* 1/);
+    result = await confirm();
+    assert.match(result.reply, /submitted for review/);
+    const pending = (
+        await client.query(
+            "SELECT * FROM employee_service_requests WHERE user_id=$1 AND status='pending_approval'",
+            [employee],
+        )
+    ).rows[0];
+    await decideRequestInTransaction(client, manager, {
+        id: pending.id,
+        action: "approve",
+        note: "Coverage arranged",
+    });
+    let details = (
+        await client.query("SELECT details FROM employee_service_requests WHERE id=$1", [
+            pending.id,
+        ])
+    ).rows[0].details;
+    assert.equal(JSON.parse(details.payrollDeduction)[0].deduction, 1000);
+    await decideRequestInTransaction(client, manager, {
+        id: pending.id,
+        action: "amend_leave",
+        note: "Grant company paid exception",
+        payTreatment: "paid",
+    });
+    details = (
+        await client.query("SELECT details FROM employee_service_requests WHERE id=$1", [
+            pending.id,
+        ])
+    ).rows[0].details;
+    assert.equal(details.unpaidDays, "0");
+    assert.equal(JSON.parse(details.leaveAllocations)[0].entitlementPaid, 0);
+    const managerRequest = randomUUID();
+    await client.query(
+        "INSERT INTO employee_service_requests(id,user_id,request_number,kind,details,status) VALUES($1,$2,$3,'leave',$4::jsonb,'pending_approval')",
+        [
+            managerRequest,
+            manager,
+            "REQ-" + managerRequest.slice(0, 8),
+            JSON.stringify({
+                dates: policy.leaveDates(futurePeriod),
+                leaveAllocations: JSON.stringify([
+                    { month: future, paid: 1, unpaid: 0, entitlementPaid: 1 },
+                ]),
+            }),
+        ],
+    );
+    await assert.rejects(
+        () =>
+            decideRequestInTransaction(client, manager, {
+                id: managerRequest,
+                action: "approve",
+                note: "",
+            }),
+        /Self-approval/,
+    );
+    await decideRequestInTransaction(client, admin, {
+        id: managerRequest,
+        action: "approve",
+        note: "Admin review",
+    });
+    console.log(
+        "PASS: database preview/confirmation, automatic approval, cancellation restores balance, future carry reservations, unpaid deduction, paid exception and Admin review of Manager leave. All fixtures rolled back; no email sent.",
+    );
+} finally {
+    await client.query("ROLLBACK");
+    client.release();
+    await pool.end();
+}

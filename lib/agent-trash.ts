@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 
 /** Permanently remove agents whose 30-day recovery window has elapsed. */
 export async function purgeExpiredAgentTrash() {
-  const result = await db.query<{ deletedCount: number }>(`
+    const result = await db.query<{ deletedCount: number }>(`
     WITH expired_releases AS MATERIALIZED (
       SELECT release.public_id, release.user_id
       FROM published_agents AS release
@@ -22,5 +22,5 @@ export async function purgeExpiredAgentTrash() {
     )
     SELECT count(*)::int AS "deletedCount" FROM removed_agents
   `);
-  return result.rows[0]?.deletedCount ?? 0;
+    return result.rows[0]?.deletedCount ?? 0;
 }

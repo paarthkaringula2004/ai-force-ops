@@ -1,8 +1,24 @@
-ALTER TABLE ticket_wallets ADD COLUMN policy_role text NOT NULL DEFAULT 'user';
-ALTER TABLE ticket_wallets ADD COLUMN last_refill_date date NOT NULL DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')::date;
-ALTER TABLE ticket_ledger DROP CONSTRAINT ticket_ledger_kind_check;
-ALTER TABLE ticket_ledger ADD CONSTRAINT ticket_ledger_kind_check CHECK(kind IN('welcome','topup','usage','refill','role_policy'));
-CREATE FUNCTION refresh_ticket_wallet(target text) RETURNS bigint LANGUAGE plpgsql AS $$
+ALTER TABLE ticket_wallets
+ADD COLUMN policy_role text NOT NULL DEFAULT 'user';
+
+ALTER TABLE ticket_wallets
+ADD COLUMN last_refill_date date NOT NULL DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')::date;
+
+ALTER TABLE ticket_ledger
+DROP CONSTRAINT ticket_ledger_kind_check;
+
+ALTER TABLE ticket_ledger
+ADD CONSTRAINT ticket_ledger_kind_check CHECK (
+    kind IN (
+        'welcome',
+        'topup',
+        'usage',
+        'refill',
+        'role_policy'
+    )
+);
+
+CREATE FUNCTION refresh_ticket_wallet (target text) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE member_role text; wallet ticket_wallets%ROWTYPE; today date := (now() AT TIME ZONE 'Asia/Kolkata')::date; allowance bigint; next_balance bigint; reason text;
 BEGIN
  SELECT role INTO member_role FROM workspace_members WHERE user_id=target;
@@ -19,7 +35,15 @@ BEGIN
  INSERT INTO ticket_ledger(id,user_id,amount,kind) VALUES(gen_random_uuid(),target,next_balance-wallet.balance,reason);
  RETURN next_balance;
 END $$;
-CREATE FUNCTION change_ticket_role_policy() RETURNS trigger LANGUAGE plpgsql AS $$
+
+CREATE FUNCTION change_ticket_role_policy () RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN PERFORM refresh_ticket_wallet(NEW.user_id); RETURN NEW; END $$;
-CREATE TRIGGER ticket_role_policy AFTER UPDATE OF role ON workspace_members FOR EACH ROW WHEN(OLD.role IS DISTINCT FROM NEW.role) EXECUTE FUNCTION change_ticket_role_policy();
-SELECT refresh_ticket_wallet(user_id) FROM workspace_members;
+
+CREATE TRIGGER ticket_role_policy
+AFTER UPDATE OF role ON workspace_members FOR EACH ROW WHEN (OLD.role IS DISTINCT FROM NEW.role)
+EXECUTE FUNCTION change_ticket_role_policy ();
+
+SELECT
+    refresh_ticket_wallet (user_id)
+FROM
+    workspace_members;

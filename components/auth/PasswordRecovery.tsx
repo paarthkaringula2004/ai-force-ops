@@ -1,22 +1,309 @@
 "use client";
-import {useEffect,useState,type FormEvent} from 'react';
-import Link from 'next/link';
-import {ArrowLeft,CheckCircle2,Copy,Eye,EyeOff,LoaderCircle,ShieldCheck} from 'lucide-react';
-import {authClient} from '@/lib/auth-client';
-const field='mt-2 h-11 w-full rounded-xl border border-[#dfe3eb] bg-white px-3.5 text-sm outline-none focus:border-[#aaa3f1] focus:ring-2 focus:ring-[#6255e8]/10';
-const primary='inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#6255e8] px-4 text-sm font-semibold text-white hover:bg-[#5146d2] disabled:opacity-50';
-export default function PasswordRecovery(){
- const [stage,setStage]=useState<'email'|'reset'|'done'>('email'),[email,setEmail]=useState(''),[otp,setOtp]=useState(''),[password,setPassword]=useState(''),[confirmation,setConfirmation]=useState(''),[visible,setVisible]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[remaining,setRemaining]=useState(0);
- useEffect(()=>{if(!remaining)return;const timer=setInterval(()=>setRemaining(r=>Math.max(0,r-1)),1000);return()=>clearInterval(timer);},[remaining]);
- async function requestCode(){
-  if(busy||remaining)return;setBusy(true);setError('');setNotice('');
-  try{const result=await authClient.emailOtp.requestPasswordReset({email:email.trim().toLowerCase()});if(result.error){setError(result.error.status===429?'Too many requests. Please wait before trying again.':'Could not request a code. Please try again shortly.');return;}setStage('reset');setOtp('');setRemaining(60);setNotice('If this email belongs to an account, a recovery code has been queued for delivery. Check your inbox and spam folder.');}
-  catch{setError('Could not reach the account service. Check your connection and try again.');}finally{setBusy(false);}
- }
- async function submit(e:FormEvent){e.preventDefault();if(stage==='email'){await requestCode();return;}setError('');setNotice('');if(password!==confirmation){setError('Your passwords do not match.');return;}if(!/^\d{6}$/.test(otp)){setError('Enter the six-digit code from your email.');return;}setBusy(true);
-  try{const result=await authClient.emailOtp.resetPassword({email:email.trim().toLowerCase(),otp,password});if(result.error){setError(result.error.status===429?'Too many attempts. Wait a minute, then request a new code.':'The code is invalid, expired or already used. Check it or request a new code.');return;}setPassword('');setConfirmation('');setOtp('');setVisible(false);setStage('done');}
-  catch{setError('The reset could not be confirmed. Try signing in before requesting another code.');}finally{setBusy(false);}
- }
- async function copyCode(){try{await navigator.clipboard.writeText(otp);setNotice('Code copied.');}catch{setError('Clipboard is unavailable. Select and copy the code manually.');}}
- return <section className="w-full max-w-[460px] rounded-3xl border border-[#e8eaf1] bg-white p-6 shadow-[0_22px_65px_rgba(36,43,67,0.09)] sm:p-9"><div className="flex size-11 items-center justify-center rounded-2xl bg-[#efedff] text-[#6255e8]">{stage==='done'?<CheckCircle2 className="size-6"/>:<ShieldCheck className="size-6"/>}</div><p className="mt-6 text-[10px] font-bold uppercase tracking-widest text-[#7168cf]">Account recovery</p><h1 className="mt-2 text-2xl font-semibold tracking-tight">{stage==='email'?'Forgot your password?':stage==='reset'?'Reset your password':'Password updated'}</h1><p className="mt-3 text-sm leading-6 text-slate-500">{stage==='email'?'Enter your account email to receive a one-time recovery code.':stage==='reset'?'Use the code from your email and choose a new password. Codes expire after 10 minutes and allow three attempts.':'Your previous sessions have been signed out. Sign in using your new password.'}</p>{stage==='done'?<Link href="/sign-in" className={primary+' mt-6'}>Back to sign in</Link>:<form onSubmit={submit} className="mt-6 space-y-4">{stage==='email'?<label className="block text-xs font-semibold">Email address<input required type="email" maxLength={254} autoComplete="email" value={email} disabled={busy} onChange={e=>setEmail(e.target.value)} className={field} placeholder="you@company.com"/></label>:<><div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600"><span className="break-all">{email}</span><button type="button" disabled={busy} onClick={()=>{setStage('email');setOtp('');setPassword('');setConfirmation('');setError('');setNotice('');}} className="ml-3 font-semibold text-[#6255e8]">Change email</button></div><label className="block text-xs font-semibold">Email verification code<div className="relative"><input required aria-label="Recovery code" type="text" inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" maxLength={6} value={otp} disabled={busy} onChange={e=>setOtp(e.target.value.replace(/\D/g,''))} className={field+' pr-12 font-mono text-xl tracking-[0.25em]'} placeholder="000000"/><button type="button" aria-label="Copy recovery code" disabled={otp.length!==6||busy} onClick={()=>void copyCode()} className="absolute bottom-0 right-0 flex h-11 w-11 items-center justify-center text-[#6255e8] disabled:opacity-35"><Copy className="size-4"/></button></div></label><label className="block text-xs font-semibold">New password<div className="relative"><input required minLength={8} maxLength={128} autoComplete="new-password" type={visible?'text':'password'} value={password} disabled={busy} onChange={e=>setPassword(e.target.value)} className={field+' pr-12'} placeholder="8–128 characters"/><button type="button" aria-label={visible?'Hide password':'Show password'} aria-pressed={visible} onClick={()=>setVisible(v=>!v)} className="absolute bottom-0 right-0 flex h-11 w-11 items-center justify-center text-slate-500">{visible?<EyeOff className="size-4"/>:<Eye className="size-4"/>}</button></div></label><label className="block text-xs font-semibold">Confirm new password<input required minLength={8} maxLength={128} autoComplete="new-password" type={visible?'text':'password'} value={confirmation} disabled={busy} onChange={e=>setConfirmation(e.target.value)} className={field}/></label></>}{error&&<p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-700">{error}</p>}{notice&&<p role="status" className="rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-800">{notice}</p>}<button type="submit" disabled={busy||stage==='email'&&remaining>0} className={primary}>{busy&&<LoaderCircle className="size-4 animate-spin"/>}{busy?'Please wait…':stage==='email'?'Send recovery code':'Reset password'}</button>{stage==='reset'&&<button type="button" disabled={busy||remaining>0} onClick={()=>void requestCode()} className="w-full py-1 text-xs font-semibold text-[#6255e8] disabled:text-slate-400">{remaining?`Resend code in ${remaining}s`:'Resend code'}</button>}</form>}{stage!=='done'&&<Link href="/sign-in" className="mt-6 inline-flex items-center gap-2 text-xs font-medium text-slate-500 hover:text-[#6255e8]"><ArrowLeft className="size-4"/>Back to sign in</Link>}</section>;
+import { useEffect, useState, type FormEvent } from "react";
+import Link from "next/link";
+import {
+    ArrowLeft,
+    CheckCircle2,
+    Copy,
+    Eye,
+    EyeOff,
+    LoaderCircle,
+    ShieldCheck,
+} from "lucide-react";
+import { authClient } from "@/lib/auth-client";
+const field =
+    "mt-2 h-11 w-full rounded-xl border border-[#dfe3eb] bg-white px-3.5 text-sm outline-none focus:border-[#aaa3f1] focus:ring-2 focus:ring-[#6255e8]/10";
+const primary =
+    "inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-xl bg-[#6255e8] px-4 text-sm font-semibold text-white hover:bg-[#5146d2] disabled:opacity-50";
+export default function PasswordRecovery() {
+    const [stage, setStage] = useState<"email" | "reset" | "done">("email"),
+        [email, setEmail] = useState(""),
+        [otp, setOtp] = useState(""),
+        [password, setPassword] = useState(""),
+        [confirmation, setConfirmation] = useState(""),
+        [visible, setVisible] = useState(false),
+        [busy, setBusy] = useState(false),
+        [error, setError] = useState(""),
+        [notice, setNotice] = useState(""),
+        [remaining, setRemaining] = useState(0);
+    useEffect(() => {
+        if (!remaining) return;
+        const timer = setInterval(() => setRemaining((r) => Math.max(0, r - 1)), 1000);
+        return () => clearInterval(timer);
+    }, [remaining]);
+    async function requestCode() {
+        if (busy || remaining) return;
+        setBusy(true);
+        setError("");
+        setNotice("");
+        try {
+            const result = await authClient.emailOtp.requestPasswordReset({
+                email: email.trim().toLowerCase(),
+            });
+            if (result.error) {
+                setError(
+                    result.error.status === 429
+                        ? "Too many requests. Please wait before trying again."
+                        : "Could not request a code. Please try again shortly.",
+                );
+                return;
+            }
+            setStage("reset");
+            setOtp("");
+            setRemaining(60);
+            setNotice(
+                "If this email belongs to an account, a recovery code has been queued for delivery. Check your inbox and spam folder.",
+            );
+        } catch {
+            setError("Could not reach the account service. Check your connection and try again.");
+        } finally {
+            setBusy(false);
+        }
+    }
+    async function submit(e: FormEvent) {
+        e.preventDefault();
+        if (stage === "email") {
+            await requestCode();
+            return;
+        }
+        setError("");
+        setNotice("");
+        if (password !== confirmation) {
+            setError("Your passwords do not match.");
+            return;
+        }
+        if (!/^\d{6}$/.test(otp)) {
+            setError("Enter the six-digit code from your email.");
+            return;
+        }
+        setBusy(true);
+        try {
+            const result = await authClient.emailOtp.resetPassword({
+                email: email.trim().toLowerCase(),
+                otp,
+                password,
+            });
+            if (result.error) {
+                setError(
+                    result.error.status === 429
+                        ? "Too many attempts. Wait a minute, then request a new code."
+                        : "The code is invalid, expired or already used. Check it or request a new code.",
+                );
+                return;
+            }
+            setPassword("");
+            setConfirmation("");
+            setOtp("");
+            setVisible(false);
+            setStage("done");
+        } catch {
+            setError(
+                "The reset could not be confirmed. Try signing in before requesting another code.",
+            );
+        } finally {
+            setBusy(false);
+        }
+    }
+    async function copyCode() {
+        try {
+            await navigator.clipboard.writeText(otp);
+            setNotice("Code copied.");
+        } catch {
+            setError("Clipboard is unavailable. Select and copy the code manually.");
+        }
+    }
+    return (
+        <section className="w-full max-w-[460px] rounded-3xl border border-[#e8eaf1] bg-white p-6 shadow-[0_22px_65px_rgba(36,43,67,0.09)] sm:p-9">
+            <div className="flex size-11 items-center justify-center rounded-2xl bg-[#efedff] text-[#6255e8]">
+                {stage === "done" ? (
+                    <CheckCircle2 className="size-6" />
+                ) : (
+                    <ShieldCheck className="size-6" />
+                )}
+            </div>
+            <p className="mt-6 text-[10px] font-bold uppercase tracking-widest text-[#7168cf]">
+                Account recovery
+            </p>
+            <h1 className="mt-2 text-2xl font-semibold tracking-tight">
+                {stage === "email"
+                    ? "Forgot your password?"
+                    : stage === "reset"
+                      ? "Reset your password"
+                      : "Password updated"}
+            </h1>
+            <p className="mt-3 text-sm leading-6 text-slate-500">
+                {stage === "email"
+                    ? "Enter your account email to receive a one-time recovery code."
+                    : stage === "reset"
+                      ? "Use the code from your email and choose a new password. Codes expire after 10 minutes and allow three attempts."
+                      : "Your previous sessions have been signed out. Sign in using your new password."}
+            </p>
+            {stage === "done" ? (
+                <Link href="/sign-in" className={primary + " mt-6"}>
+                    Back to sign in
+                </Link>
+            ) : (
+                <form onSubmit={submit} className="mt-6 space-y-4">
+                    {stage === "email" ? (
+                        <label className="block text-xs font-semibold">
+                            Email address
+                            <input
+                                required
+                                type="email"
+                                maxLength={254}
+                                autoComplete="email"
+                                value={email}
+                                disabled={busy}
+                                onChange={(e) => setEmail(e.target.value)}
+                                className={field}
+                                placeholder="you@company.com"
+                            />
+                        </label>
+                    ) : (
+                        <>
+                            <div className="rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+                                <span className="break-all">{email}</span>
+                                <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => {
+                                        setStage("email");
+                                        setOtp("");
+                                        setPassword("");
+                                        setConfirmation("");
+                                        setError("");
+                                        setNotice("");
+                                    }}
+                                    className="ml-3 font-semibold text-[#6255e8]"
+                                >
+                                    Change email
+                                </button>
+                            </div>
+                            <label className="block text-xs font-semibold">
+                                Email verification code
+                                <div className="relative">
+                                    <input
+                                        required
+                                        aria-label="Recovery code"
+                                        type="text"
+                                        inputMode="numeric"
+                                        autoComplete="one-time-code"
+                                        pattern="[0-9]{6}"
+                                        maxLength={6}
+                                        value={otp}
+                                        disabled={busy}
+                                        onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+                                        className={
+                                            field + " pr-12 font-mono text-xl tracking-[0.25em]"
+                                        }
+                                        placeholder="000000"
+                                    />
+                                    <button
+                                        type="button"
+                                        aria-label="Copy recovery code"
+                                        disabled={otp.length !== 6 || busy}
+                                        onClick={() => void copyCode()}
+                                        className="absolute bottom-0 right-0 flex h-11 w-11 items-center justify-center text-[#6255e8] disabled:opacity-35"
+                                    >
+                                        <Copy className="size-4" />
+                                    </button>
+                                </div>
+                            </label>
+                            <label className="block text-xs font-semibold">
+                                New password
+                                <div className="relative">
+                                    <input
+                                        required
+                                        minLength={8}
+                                        maxLength={128}
+                                        autoComplete="new-password"
+                                        type={visible ? "text" : "password"}
+                                        value={password}
+                                        disabled={busy}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        className={field + " pr-12"}
+                                        placeholder="8–128 characters"
+                                    />
+                                    <button
+                                        type="button"
+                                        aria-label={visible ? "Hide password" : "Show password"}
+                                        aria-pressed={visible}
+                                        onClick={() => setVisible((v) => !v)}
+                                        className="absolute bottom-0 right-0 flex h-11 w-11 items-center justify-center text-slate-500"
+                                    >
+                                        {visible ? (
+                                            <EyeOff className="size-4" />
+                                        ) : (
+                                            <Eye className="size-4" />
+                                        )}
+                                    </button>
+                                </div>
+                            </label>
+                            <label className="block text-xs font-semibold">
+                                Confirm new password
+                                <input
+                                    required
+                                    minLength={8}
+                                    maxLength={128}
+                                    autoComplete="new-password"
+                                    type={visible ? "text" : "password"}
+                                    value={confirmation}
+                                    disabled={busy}
+                                    onChange={(e) => setConfirmation(e.target.value)}
+                                    className={field}
+                                />
+                            </label>
+                        </>
+                    )}
+                    {error && (
+                        <p
+                            role="alert"
+                            className="rounded-xl border border-rose-200 bg-rose-50 p-3 text-xs leading-5 text-rose-700"
+                        >
+                            {error}
+                        </p>
+                    )}
+                    {notice && (
+                        <p
+                            role="status"
+                            className="rounded-xl bg-emerald-50 p-3 text-xs leading-5 text-emerald-800"
+                        >
+                            {notice}
+                        </p>
+                    )}
+                    <button
+                        type="submit"
+                        disabled={busy || (stage === "email" && remaining > 0)}
+                        className={primary}
+                    >
+                        {busy && <LoaderCircle className="size-4 animate-spin" />}
+                        {busy
+                            ? "Please wait…"
+                            : stage === "email"
+                              ? "Send recovery code"
+                              : "Reset password"}
+                    </button>
+                    {stage === "reset" && (
+                        <button
+                            type="button"
+                            disabled={busy || remaining > 0}
+                            onClick={() => void requestCode()}
+                            className="w-full py-1 text-xs font-semibold text-[#6255e8] disabled:text-slate-400"
+                        >
+                            {remaining ? `Resend code in ${remaining}s` : "Resend code"}
+                        </button>
+                    )}
+                </form>
+            )}
+            {stage !== "done" && (
+                <Link
+                    href="/sign-in"
+                    className="mt-6 inline-flex items-center gap-2 text-xs font-medium text-slate-500 hover:text-[#6255e8]"
+                >
+                    <ArrowLeft className="size-4" />
+                    Back to sign in
+                </Link>
+            )}
+        </section>
+    );
 }

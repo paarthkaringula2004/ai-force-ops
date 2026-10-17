@@ -4,59 +4,550 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, CalendarDays, Check, Send, Users, Video, X } from "lucide-react";
 
-export const meetingInput = "mt-2 w-full rounded-xl border border-[#e6e4f0] bg-[#fbfaff] px-3.5 py-3 text-sm text-slate-800 outline-none focus:border-[#6550ed] focus:ring-2 focus:ring-[#6550ed]/10 disabled:opacity-50";
-export const meetingPrimary = "inline-flex items-center justify-center gap-2 rounded-xl bg-[#6550ed] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#5643d6] disabled:cursor-not-allowed disabled:opacity-40";
-export const meetingSecondary = "inline-flex items-center justify-center gap-2 rounded-xl border border-[#e6e4f0] bg-white px-4 py-3 text-sm font-medium text-slate-600 transition hover:text-[#6550ed] disabled:cursor-not-allowed disabled:opacity-40";
+export const meetingInput =
+    "mt-2 w-full rounded-xl border border-[#e6e4f0] bg-[#fbfaff] px-3.5 py-3 text-sm text-slate-800 outline-none focus:border-[#6550ed] focus:ring-2 focus:ring-[#6550ed]/10 disabled:opacity-50";
+export const meetingPrimary =
+    "inline-flex items-center justify-center gap-2 rounded-xl bg-[#6550ed] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[#5643d6] disabled:cursor-not-allowed disabled:opacity-40";
+export const meetingSecondary =
+    "inline-flex items-center justify-center gap-2 rounded-xl border border-[#e6e4f0] bg-white px-4 py-3 text-sm font-medium text-slate-600 transition hover:text-[#6550ed] disabled:cursor-not-allowed disabled:opacity-40";
 export const meetingPanel = "rounded-2xl border border-[#e9e7f2] bg-white p-5 sm:p-6";
-export const meetingTime = (value: string) => new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
-export type MeetingInvitation = { provider?: string; id: string; title: string; start: string; end: string; senderName: string; status: string; meetingStatus: string; mode: "virtual" | "in_person"; joinUrl: string | null; roomName: string | null; location: string | null };
-type Directory = { roles: string[]; people: { id: string; name: string; role: string; department: string | null }[]; departments: string[] };
-export const canJoinMeeting = (invite: MeetingInvitation, now: number) => invite.mode === "virtual" && invite.meetingStatus === "ready" && invite.status !== "declined" && !!invite.joinUrl && now >= Date.parse(invite.start) - 10 * 60000 && now < Date.parse(invite.end);
+export const meetingTime = (value: string) =>
+    new Date(value).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+export type MeetingInvitation = {
+    provider?: string;
+    id: string;
+    title: string;
+    start: string;
+    end: string;
+    senderName: string;
+    status: string;
+    meetingStatus: string;
+    mode: "virtual" | "in_person";
+    joinUrl: string | null;
+    roomName: string | null;
+    location: string | null;
+};
+type Directory = {
+    roles: string[];
+    people: { id: string; name: string; role: string; department: string | null }[];
+    departments: string[];
+};
+export const canJoinMeeting = (invite: MeetingInvitation, now: number) =>
+    invite.mode === "virtual" &&
+    invite.meetingStatus === "ready" &&
+    invite.status !== "declined" &&
+    !!invite.joinUrl &&
+    now >= Date.parse(invite.start) - 10 * 60000 &&
+    now < Date.parse(invite.end);
 export async function meetingAction(body: Record<string, unknown>) {
-  const response = await fetch("/api/meetings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-  const result = await response.json();
-  if (!response.ok) throw new Error(result.error || "Meeting request failed.");
-  return result;
+    const response = await fetch("/api/meetings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+    });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Meeting request failed.");
+    return result;
 }
 
-export function MeetingInvitePicker({ id, mode, title, onClose }: { id: string; mode: "virtual" | "in_person"; title: string; onClose: () => void }) {
-  const picker=useRef<HTMLElement>(null);
-  useEffect(() => { const frame=window.requestAnimationFrame(()=>picker.current?.scrollIntoView({behavior:"smooth",block:"start"}));return ()=>window.cancelAnimationFrame(frame); },[]);
-  const [directory, setDirectory] = useState<Directory | null>(null), [people, setPeople] = useState<string[]>([]), [departments, setDepartments] = useState<string[]>([]), [search, setSearch] = useState("");
-  const [error, setError] = useState(""), [notice, setNotice] = useState(""), [busy, setBusy] = useState(false);
-  useEffect(() => { const controller = new AbortController(); void fetch("/api/meetings?directory=1", { cache: "no-store", signal: controller.signal }).then(async response => { const data = await response.json(); if (!response.ok) throw new Error(data.error); setDirectory(data); }).catch(e => { if (!controller.signal.aborted) setError(e.message); }); return () => controller.abort(); }, []);
-  const toggle = (items: string[], value: string) => items.includes(value) ? items.filter(item => item !== value) : [...items, value];
-  const recipientCount = directory?.people.filter(person => people.includes(person.id) || !!person.department && departments.includes(person.department)).length || 0;
-  return <section ref={picker} className={`${meetingPanel} scroll-mt-5 border-[#d8d0ff]`} aria-label="Invite workspace people">
-    <div className="flex items-start justify-between gap-4"><div><h3 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Users className="size-5 text-[#6550ed]" />Invite people</h3><p className="mt-2 text-sm text-slate-500">{title}</p></div><button aria-label="Close invitation selection" onClick={onClose}><X className="size-5 text-slate-400" /></button></div>
-    <p className="mt-3 text-xs leading-5 text-slate-500">Choose departments, specific people, or both. Your role allows invitations to {directory?.roles.join(", ") || "eligible workspace people"}. Invitations appear in their workspace.</p>
-    {error && <p role="alert" className="mt-3 text-sm text-rose-600">{error}</p>}{notice && <p role="status" className="mt-3 text-sm text-emerald-700">{notice}</p>}
-    {!directory ? <p className="mt-4 text-sm text-slate-500">Loading eligible people…</p> : <>
-      <fieldset disabled={busy} className="mt-5"><legend className="text-sm font-semibold text-slate-700">Departments</legend><div className="mt-3 flex flex-wrap gap-2">{directory.departments.length ? directory.departments.map(department => <label key={department} className="flex cursor-pointer items-center gap-2 rounded-xl border border-[#e9e7f2] px-3 py-2 text-sm text-slate-600"><input type="checkbox" className="accent-[#6550ed]" checked={departments.includes(department)} onChange={() => { setDepartments(toggle(departments, department)); setNotice(""); }} />{department}</label>) : <p className="text-xs text-slate-400">No departments assigned yet. Choose people below.</p>}</div></fieldset>
-      <label className="mt-5 block text-sm font-semibold text-slate-700">Specific people<input type="search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search by name or department" className={meetingInput} /></label>
-      <fieldset disabled={busy} className="mt-3 max-h-60 space-y-1 overflow-y-auto rounded-xl border border-[#efedf6] p-2"><legend className="sr-only">Eligible workspace people</legend>{directory.people.filter(person => `${person.name} ${person.department || ""}`.toLowerCase().includes(search.toLowerCase())).map(person => <label key={person.id} className="flex cursor-pointer items-center gap-3 rounded-lg p-2.5 hover:bg-[#f8f6ff]"><input type="checkbox" className="accent-[#6550ed]" checked={people.includes(person.id)} onChange={() => { setPeople(toggle(people, person.id)); setNotice(""); }} /><span className="min-w-0 flex-1 text-sm text-slate-700">{person.name}<span className="mt-1 block text-xs text-slate-400">{person.department || "No department"} · {person.role}</span></span>{person.department && departments.includes(person.department) && <span className="text-[10px] text-[#6550ed]">Included by department</span>}</label>)}{!directory.people.length && <p className="p-3 text-xs text-slate-500">No other eligible active workspace members yet.</p>}</fieldset>
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><span className="text-xs text-slate-500">{recipientCount} eligible {recipientCount === 1 ? "person" : "people"} selected</span><button disabled={busy || !recipientCount} className={meetingPrimary} onClick={async () => { setBusy(true); setError(""); setNotice(""); try { const result = await meetingAction({ action: "invite", id, mode, people, departments }); setNotice(`${result.sent} invitations sent${result.alreadyInvited ? `; ${result.alreadyInvited} already invited` : ""}.`); setPeople([]); setDepartments([]); } catch (e) { setError(e instanceof Error ? e.message : "Invitations could not be sent."); } finally { setBusy(false); } }}><Send className="size-4" />{busy ? "Sending…" : "Send invitations"}</button></div>
-    </>}
-  </section>;
+export function MeetingInvitePicker({
+    id,
+    mode,
+    title,
+    onClose,
+}: {
+    id: string;
+    mode: "virtual" | "in_person";
+    title: string;
+    onClose: () => void;
+}) {
+    const picker = useRef<HTMLElement>(null);
+    useEffect(() => {
+        const frame = window.requestAnimationFrame(() =>
+            picker.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+        );
+        return () => window.cancelAnimationFrame(frame);
+    }, []);
+    const [directory, setDirectory] = useState<Directory | null>(null),
+        [people, setPeople] = useState<string[]>([]),
+        [departments, setDepartments] = useState<string[]>([]),
+        [search, setSearch] = useState("");
+    const [error, setError] = useState(""),
+        [notice, setNotice] = useState(""),
+        [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const controller = new AbortController();
+        void fetch("/api/meetings?directory=1", { cache: "no-store", signal: controller.signal })
+            .then(async (response) => {
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error);
+                setDirectory(data);
+            })
+            .catch((e) => {
+                if (!controller.signal.aborted) setError(e.message);
+            });
+        return () => controller.abort();
+    }, []);
+    const toggle = (items: string[], value: string) =>
+        items.includes(value) ? items.filter((item) => item !== value) : [...items, value];
+    const recipientCount =
+        directory?.people.filter(
+            (person) =>
+                people.includes(person.id) ||
+                (!!person.department && departments.includes(person.department)),
+        ).length || 0;
+    return (
+        <section
+            ref={picker}
+            className={`${meetingPanel} scroll-mt-5 border-[#d8d0ff]`}
+            aria-label="Invite workspace people"
+        >
+            <div className="flex items-start justify-between gap-4">
+                <div>
+                    <h3 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                        <Users className="size-5 text-[#6550ed]" />
+                        Invite people
+                    </h3>
+                    <p className="mt-2 text-sm text-slate-500">{title}</p>
+                </div>
+                <button aria-label="Close invitation selection" onClick={onClose}>
+                    <X className="size-5 text-slate-400" />
+                </button>
+            </div>
+            <p className="mt-3 text-xs leading-5 text-slate-500">
+                Choose departments, specific people, or both. Your role allows invitations to{" "}
+                {directory?.roles.join(", ") || "eligible workspace people"}. Invitations appear in
+                their workspace.
+            </p>
+            {error && (
+                <p role="alert" className="mt-3 text-sm text-rose-600">
+                    {error}
+                </p>
+            )}
+            {notice && (
+                <p role="status" className="mt-3 text-sm text-emerald-700">
+                    {notice}
+                </p>
+            )}
+            {!directory ? (
+                <p className="mt-4 text-sm text-slate-500">Loading eligible people…</p>
+            ) : (
+                <>
+                    <fieldset disabled={busy} className="mt-5">
+                        <legend className="text-sm font-semibold text-slate-700">
+                            Departments
+                        </legend>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                            {directory.departments.length ? (
+                                directory.departments.map((department) => (
+                                    <label
+                                        key={department}
+                                        className="flex cursor-pointer items-center gap-2 rounded-xl border border-[#e9e7f2] px-3 py-2 text-sm text-slate-600"
+                                    >
+                                        <input
+                                            type="checkbox"
+                                            className="accent-[#6550ed]"
+                                            checked={departments.includes(department)}
+                                            onChange={() => {
+                                                setDepartments(toggle(departments, department));
+                                                setNotice("");
+                                            }}
+                                        />
+                                        {department}
+                                    </label>
+                                ))
+                            ) : (
+                                <p className="text-xs text-slate-400">
+                                    No departments assigned yet. Choose people below.
+                                </p>
+                            )}
+                        </div>
+                    </fieldset>
+                    <label className="mt-5 block text-sm font-semibold text-slate-700">
+                        Specific people
+                        <input
+                            type="search"
+                            value={search}
+                            onChange={(e) => setSearch(e.target.value)}
+                            placeholder="Search by name or department"
+                            className={meetingInput}
+                        />
+                    </label>
+                    <fieldset
+                        disabled={busy}
+                        className="mt-3 max-h-60 space-y-1 overflow-y-auto rounded-xl border border-[#efedf6] p-2"
+                    >
+                        <legend className="sr-only">Eligible workspace people</legend>
+                        {directory.people
+                            .filter((person) =>
+                                `${person.name} ${person.department || ""}`
+                                    .toLowerCase()
+                                    .includes(search.toLowerCase()),
+                            )
+                            .map((person) => (
+                                <label
+                                    key={person.id}
+                                    className="flex cursor-pointer items-center gap-3 rounded-lg p-2.5 hover:bg-[#f8f6ff]"
+                                >
+                                    <input
+                                        type="checkbox"
+                                        className="accent-[#6550ed]"
+                                        checked={people.includes(person.id)}
+                                        onChange={() => {
+                                            setPeople(toggle(people, person.id));
+                                            setNotice("");
+                                        }}
+                                    />
+                                    <span className="min-w-0 flex-1 text-sm text-slate-700">
+                                        {person.name}
+                                        <span className="mt-1 block text-xs text-slate-400">
+                                            {person.department || "No department"} · {person.role}
+                                        </span>
+                                    </span>
+                                    {person.department &&
+                                        departments.includes(person.department) && (
+                                            <span className="text-[10px] text-[#6550ed]">
+                                                Included by department
+                                            </span>
+                                        )}
+                                </label>
+                            ))}
+                        {!directory.people.length && (
+                            <p className="p-3 text-xs text-slate-500">
+                                No other eligible active workspace members yet.
+                            </p>
+                        )}
+                    </fieldset>
+                    <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                        <span className="text-xs text-slate-500">
+                            {recipientCount} eligible {recipientCount === 1 ? "person" : "people"}{" "}
+                            selected
+                        </span>
+                        <button
+                            disabled={busy || !recipientCount}
+                            className={meetingPrimary}
+                            onClick={async () => {
+                                setBusy(true);
+                                setError("");
+                                setNotice("");
+                                try {
+                                    const result = await meetingAction({
+                                        action: "invite",
+                                        id,
+                                        mode,
+                                        people,
+                                        departments,
+                                    });
+                                    setNotice(
+                                        `${result.sent} invitations sent${result.alreadyInvited ? `; ${result.alreadyInvited} already invited` : ""}.`,
+                                    );
+                                    setPeople([]);
+                                    setDepartments([]);
+                                } catch (e) {
+                                    setError(
+                                        e instanceof Error
+                                            ? e.message
+                                            : "Invitations could not be sent.",
+                                    );
+                                } finally {
+                                    setBusy(false);
+                                }
+                            }}
+                        >
+                            <Send className="size-4" />
+                            {busy ? "Sending…" : "Send invitations"}
+                        </button>
+                    </div>
+                </>
+            )}
+        </section>
+    );
 }
 
 export function MeetingInbox() {
-  const [now, setNow] = useState(0);
-  const [invitations, setInvitations] = useState<MeetingInvitation[]>([]), [error, setError] = useState(""), [busy, setBusy] = useState<string | null>(null);
-  const refresh = useCallback(async (signal?: AbortSignal) => { try { const response = await fetch("/api/meetings?inbox=all", { cache: "no-store", signal }); const data = await response.json(); if (!response.ok) throw new Error(data.error); if (!signal?.aborted) { setInvitations(data.invitations); setNow(Date.now()); setError(""); } } catch (e) { if (!signal?.aborted) setError(e instanceof Error ? e.message : "Could not load invitations."); } }, []);
-  useEffect(() => { const controller = new AbortController(); const initial = window.setTimeout(() => void refresh(controller.signal), 0); const timer = window.setInterval(() => { if (document.visibilityState === "visible") void refresh(controller.signal); }, 5000); return () => { controller.abort(); window.clearTimeout(initial); window.clearInterval(timer); }; }, [refresh]);
-  return <section className={meetingPanel}><h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900"><Bell className="size-5 text-[#6550ed]" />Invited to you</h2><p className="mt-1 text-xs text-slate-500">Meeting invitations sent to you. Updates refresh every five seconds.</p>{error && <p role="alert" className="mt-3 text-sm text-rose-600">{error}</p>}
-    {!invitations.length ? <p className="mt-5 rounded-xl bg-[#faf9ff] p-4 text-sm text-slate-500">Your upcoming invitations will appear here.</p> : <div className="mt-5 space-y-3">{invitations.map(invite => <article key={invite.id} className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[#e9e7f2] p-4"><div><h3 className="font-semibold text-slate-800">{invite.title}</h3><p className="mt-1 text-xs text-slate-500">{invite.senderName} invited you · {invite.mode === "virtual" ? (invite.provider === "google" ? "Google Meet" : "Microsoft Teams") : `${invite.roomName} · ${invite.location}`}</p><p className="mt-2 flex items-center gap-2 text-xs text-slate-500"><CalendarDays className="size-3.5" />{meetingTime(invite.start)} → {meetingTime(invite.end)}</p><p className="mt-2 text-xs text-[#6550ed]">{invite.meetingStatus === "cancelled" ? "Meeting cancelled" : invite.status === "pending" ? "Awaiting your response" : invite.status}</p></div><div className="flex flex-wrap gap-2">{invite.meetingStatus !== "cancelled" && <>{canJoinMeeting(invite, now) && <a href={invite.joinUrl!} target="_blank" rel="noopener noreferrer" className={meetingPrimary}><Video className="size-4" />Join now</a>}{invite.status !== "accepted" && <button disabled={busy === invite.id} className={meetingSecondary} onClick={async () => { setBusy(invite.id); try { await meetingAction({ action: "respond", id: invite.id, response: "accept" }); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "Could not respond."); } finally { setBusy(null); } }}><Check className="size-4" />Accept</button>}{invite.status !== "declined" && <button disabled={busy === invite.id} className={meetingSecondary} onClick={async () => { setBusy(invite.id); try { await meetingAction({ action: "respond", id: invite.id, response: "decline" }); await refresh(); } catch (e) { setError(e instanceof Error ? e.message : "Could not respond."); } finally { setBusy(null); } }}>Decline</button>}</>}</div></article>)}</div>}
-  </section>;
+    const [now, setNow] = useState(0);
+    const [invitations, setInvitations] = useState<MeetingInvitation[]>([]),
+        [error, setError] = useState(""),
+        [busy, setBusy] = useState<string | null>(null);
+    const refresh = useCallback(async (signal?: AbortSignal) => {
+        try {
+            const response = await fetch("/api/meetings?inbox=all", { cache: "no-store", signal });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error);
+            if (!signal?.aborted) {
+                setInvitations(data.invitations);
+                setNow(Date.now());
+                setError("");
+            }
+        } catch (e) {
+            if (!signal?.aborted)
+                setError(e instanceof Error ? e.message : "Could not load invitations.");
+        }
+    }, []);
+    useEffect(() => {
+        const controller = new AbortController();
+        const initial = window.setTimeout(() => void refresh(controller.signal), 0);
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === "visible") void refresh(controller.signal);
+        }, 5000);
+        return () => {
+            controller.abort();
+            window.clearTimeout(initial);
+            window.clearInterval(timer);
+        };
+    }, [refresh]);
+    return (
+        <section className={meetingPanel}>
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-slate-900">
+                <Bell className="size-5 text-[#6550ed]" />
+                Invited to you
+            </h2>
+            <p className="mt-1 text-xs text-slate-500">
+                Meeting invitations sent to you. Updates refresh every five seconds.
+            </p>
+            {error && (
+                <p role="alert" className="mt-3 text-sm text-rose-600">
+                    {error}
+                </p>
+            )}
+            {!invitations.length ? (
+                <p className="mt-5 rounded-xl bg-[#faf9ff] p-4 text-sm text-slate-500">
+                    Your upcoming invitations will appear here.
+                </p>
+            ) : (
+                <div className="mt-5 space-y-3">
+                    {invitations.map((invite) => (
+                        <article
+                            key={invite.id}
+                            className="flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[#e9e7f2] p-4"
+                        >
+                            <div>
+                                <h3 className="font-semibold text-slate-800">{invite.title}</h3>
+                                <p className="mt-1 text-xs text-slate-500">
+                                    {invite.senderName} invited you ·{" "}
+                                    {invite.mode === "virtual"
+                                        ? invite.provider === "google"
+                                            ? "Google Meet"
+                                            : "Microsoft Teams"
+                                        : `${invite.roomName} · ${invite.location}`}
+                                </p>
+                                <p className="mt-2 flex items-center gap-2 text-xs text-slate-500">
+                                    <CalendarDays className="size-3.5" />
+                                    {meetingTime(invite.start)} → {meetingTime(invite.end)}
+                                </p>
+                                <p className="mt-2 text-xs text-[#6550ed]">
+                                    {invite.meetingStatus === "cancelled"
+                                        ? "Meeting cancelled"
+                                        : invite.status === "pending"
+                                          ? "Awaiting your response"
+                                          : invite.status}
+                                </p>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                {invite.meetingStatus !== "cancelled" && (
+                                    <>
+                                        {canJoinMeeting(invite, now) && (
+                                            <a
+                                                href={invite.joinUrl!}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className={meetingPrimary}
+                                            >
+                                                <Video className="size-4" />
+                                                Join now
+                                            </a>
+                                        )}
+                                        {invite.status !== "accepted" && (
+                                            <button
+                                                disabled={busy === invite.id}
+                                                className={meetingSecondary}
+                                                onClick={async () => {
+                                                    setBusy(invite.id);
+                                                    try {
+                                                        await meetingAction({
+                                                            action: "respond",
+                                                            id: invite.id,
+                                                            response: "accept",
+                                                        });
+                                                        await refresh();
+                                                    } catch (e) {
+                                                        setError(
+                                                            e instanceof Error
+                                                                ? e.message
+                                                                : "Could not respond.",
+                                                        );
+                                                    } finally {
+                                                        setBusy(null);
+                                                    }
+                                                }}
+                                            >
+                                                <Check className="size-4" />
+                                                Accept
+                                            </button>
+                                        )}
+                                        {invite.status !== "declined" && (
+                                            <button
+                                                disabled={busy === invite.id}
+                                                className={meetingSecondary}
+                                                onClick={async () => {
+                                                    setBusy(invite.id);
+                                                    try {
+                                                        await meetingAction({
+                                                            action: "respond",
+                                                            id: invite.id,
+                                                            response: "decline",
+                                                        });
+                                                        await refresh();
+                                                    } catch (e) {
+                                                        setError(
+                                                            e instanceof Error
+                                                                ? e.message
+                                                                : "Could not respond.",
+                                                        );
+                                                    } finally {
+                                                        setBusy(null);
+                                                    }
+                                                }}
+                                            >
+                                                Decline
+                                            </button>
+                                        )}
+                                    </>
+                                )}
+                            </div>
+                        </article>
+                    ))}
+                </div>
+            )}
+        </section>
+    );
 }
 
 export function WorkspaceMeetingNotifications({ userId }: { userId: string }) {
-  const router=useRouter();
-  const dismissed=useRef(new Set<string>());
-  const [now, setNow] = useState(0);
-  const [invites, setInvites] = useState<MeetingInvitation[]>([]), [error, setError] = useState(""), [busy, setBusy] = useState(false);
-  useEffect(() => { const controller = new AbortController(); const load = async () => { try { const response = await fetch("/api/meetings?inbox=unread", { cache: "no-store", signal: controller.signal }); if (response.ok) { const data = await response.json(); if (!controller.signal.aborted) { setInvites(data.invitations.filter((item: MeetingInvitation) => !dismissed.current.has(`${item.id}:${item.meetingStatus}`))); setNow(Date.now()); } } } catch { /* A failed background refresh must not interrupt the workspace. */ } }; void load(); const timer = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 5000); const visible = () => { if (document.visibilityState === "visible") void load(); }; document.addEventListener("visibilitychange", visible); return () => { controller.abort(); window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); }; }, [userId]);
-  const invite = invites[0]; if (!invite) return null;
-  async function dismiss(response: string) { setBusy(true); setError(""); try { await meetingAction({ action: "respond", id: invite.id, response }); dismissed.current.add(`${invite.id}:${invite.meetingStatus}`); setInvites(items => items.filter(item => item.id !== invite.id)); } catch (e) { setError(e instanceof Error ? e.message : "Could not update invitation."); } finally { setBusy(false); } }
-  return <aside role="status" aria-label="Meeting invitation notification" className="fixed bottom-5 right-5 z-50 w-[calc(100vw_-_2.5rem)] max-w-sm rounded-2xl border border-[#dcd5ff] bg-white p-5 shadow-[0_15px_65px_rgba(63,45,115,0.2)]"><div className="flex items-center justify-between"><span className="flex items-center gap-2 text-xs font-semibold text-[#6550ed]"><Bell className="size-4" />{invite.meetingStatus === "cancelled" ? "Meeting cancelled" : "You're invited"}</span><button disabled={busy} aria-label="Dismiss invitation notification" onClick={() => void dismiss("dismiss")}><X className="size-4 text-slate-400" /></button></div><h3 className="mt-3 font-semibold text-slate-900">{invite.title}</h3><p className="mt-2 text-sm text-slate-500">{invite.senderName}{invite.meetingStatus === "cancelled" ? " cancelled this meeting." : " invited you to a meeting."}</p><p className="mt-2 text-xs leading-5 text-slate-500">Scheduled for {meetingTime(invite.start)}{invite.mode === "virtual" ? (invite.provider === "google" ? " · Google Meet" : " · Microsoft Teams") : ` · ${invite.roomName}`}</p>{error && <p className="mt-2 text-xs text-rose-600">{error}</p>}<div className="mt-4 flex flex-wrap gap-2">{canJoinMeeting(invite, now) && <a href={invite.joinUrl!} target="_blank" rel="noopener noreferrer" onClick={() => void dismiss("accept")} className={meetingPrimary}><Video className="size-4" />Join now</a>}<a href={`/dashboard/meeting-rooms?mode=${invite.mode === "virtual" ? "virtual" : "in_person"}`} onClick={async e => { e.preventDefault(); await dismiss("dismiss"); router.push(`/dashboard/meeting-rooms?mode=${invite.mode === "virtual" ? "virtual" : "in_person"}`); }} className={meetingSecondary}>View invitation</a></div>{invites.length > 1 && <p className="mt-3 text-xs text-slate-400">{invites.length - 1} more invitations</p>}</aside>;
+    const router = useRouter();
+    const dismissed = useRef(new Set<string>());
+    const [now, setNow] = useState(0);
+    const [invites, setInvites] = useState<MeetingInvitation[]>([]),
+        [error, setError] = useState(""),
+        [busy, setBusy] = useState(false);
+    useEffect(() => {
+        const controller = new AbortController();
+        const load = async () => {
+            try {
+                const response = await fetch("/api/meetings?inbox=unread", {
+                    cache: "no-store",
+                    signal: controller.signal,
+                });
+                if (response.ok) {
+                    const data = await response.json();
+                    if (!controller.signal.aborted) {
+                        setInvites(
+                            data.invitations.filter(
+                                (item: MeetingInvitation) =>
+                                    !dismissed.current.has(`${item.id}:${item.meetingStatus}`),
+                            ),
+                        );
+                        setNow(Date.now());
+                    }
+                }
+            } catch {
+                /* A failed background refresh must not interrupt the workspace. */
+            }
+        };
+        void load();
+        const timer = window.setInterval(() => {
+            if (document.visibilityState === "visible") void load();
+        }, 5000);
+        const visible = () => {
+            if (document.visibilityState === "visible") void load();
+        };
+        document.addEventListener("visibilitychange", visible);
+        return () => {
+            controller.abort();
+            window.clearInterval(timer);
+            document.removeEventListener("visibilitychange", visible);
+        };
+    }, [userId]);
+    const invite = invites[0];
+    if (!invite) return null;
+    async function dismiss(response: string) {
+        setBusy(true);
+        setError("");
+        try {
+            await meetingAction({ action: "respond", id: invite.id, response });
+            dismissed.current.add(`${invite.id}:${invite.meetingStatus}`);
+            setInvites((items) => items.filter((item) => item.id !== invite.id));
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Could not update invitation.");
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <aside
+            role="status"
+            aria-label="Meeting invitation notification"
+            className="fixed bottom-5 right-5 z-50 w-[calc(100vw_-_2.5rem)] max-w-sm rounded-2xl border border-[#dcd5ff] bg-white p-5 shadow-[0_15px_65px_rgba(63,45,115,0.2)]"
+        >
+            <div className="flex items-center justify-between">
+                <span className="flex items-center gap-2 text-xs font-semibold text-[#6550ed]">
+                    <Bell className="size-4" />
+                    {invite.meetingStatus === "cancelled" ? "Meeting cancelled" : "You're invited"}
+                </span>
+                <button
+                    disabled={busy}
+                    aria-label="Dismiss invitation notification"
+                    onClick={() => void dismiss("dismiss")}
+                >
+                    <X className="size-4 text-slate-400" />
+                </button>
+            </div>
+            <h3 className="mt-3 font-semibold text-slate-900">{invite.title}</h3>
+            <p className="mt-2 text-sm text-slate-500">
+                {invite.senderName}
+                {invite.meetingStatus === "cancelled"
+                    ? " cancelled this meeting."
+                    : " invited you to a meeting."}
+            </p>
+            <p className="mt-2 text-xs leading-5 text-slate-500">
+                Scheduled for {meetingTime(invite.start)}
+                {invite.mode === "virtual"
+                    ? invite.provider === "google"
+                        ? " · Google Meet"
+                        : " · Microsoft Teams"
+                    : ` · ${invite.roomName}`}
+            </p>
+            {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
+            <div className="mt-4 flex flex-wrap gap-2">
+                {canJoinMeeting(invite, now) && (
+                    <a
+                        href={invite.joinUrl!}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        onClick={() => void dismiss("accept")}
+                        className={meetingPrimary}
+                    >
+                        <Video className="size-4" />
+                        Join now
+                    </a>
+                )}
+                <a
+                    href={`/dashboard/meeting-rooms?mode=${invite.mode === "virtual" ? "virtual" : "in_person"}`}
+                    onClick={async (e) => {
+                        e.preventDefault();
+                        await dismiss("dismiss");
+                        router.push(
+                            `/dashboard/meeting-rooms?mode=${invite.mode === "virtual" ? "virtual" : "in_person"}`,
+                        );
+                    }}
+                    className={meetingSecondary}
+                >
+                    View invitation
+                </a>
+            </div>
+            {invites.length > 1 && (
+                <p className="mt-3 text-xs text-slate-400">{invites.length - 1} more invitations</p>
+            )}
+        </aside>
+    );
 }

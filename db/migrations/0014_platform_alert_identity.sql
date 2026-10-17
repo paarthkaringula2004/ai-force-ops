@@ -1,4 +1,4 @@
-CREATE OR REPLACE FUNCTION platform_capture_change() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE OR REPLACE FUNCTION platform_capture_change () RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE row_data jsonb; old_data jsonb; owner_id text; resource text; area text; action_name text; status_name text := 'success';
  href text; title text; alert_key text; emit_alert boolean := false; resolve_alert boolean := false;
 BEGIN

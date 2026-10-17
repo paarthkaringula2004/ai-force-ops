@@ -1,30 +1,300 @@
 "use client";
-import {useEffect,useRef,useState} from 'react';
-import {Plus,CheckCircle2,Trash2} from 'lucide-react';
-import ThemedSelect from '@/components/themed-select';
-import type {StaffCatalog} from '@/lib/staff-catalog';
-const field='mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm';
-export default function StaffCatalogEditor({catalog,onSaved}:{catalog:StaffCatalog;onSaved:()=>void}){
- const [removing,setRemoving]=useState<{code:number;name:string}|null>(null);
- const removeDialog=useRef<HTMLDialogElement>(null);
- useEffect(()=>{const dialog=removeDialog.current;if(removing&&!dialog?.open)dialog?.showModal();else if(!removing&&dialog?.open)dialog.close();},[removing]);
- const catalogElement=useRef<HTMLDetailsElement>(null);
- useEffect(()=>{if(window.location.hash==='#staff-catalog'&&catalogElement.current){catalogElement.current.open=true;catalogElement.current.scrollIntoView({block:'start'});}},[]);
- const [kind,setKind]=useState('department'),[name,setName]=useState(''),[code,setCode]=useState(''),[department,setDepartment]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
- async function create(){setBusy(true);setError('');setNotice('');try{
-  const r=await fetch('/api/workspace/catalog',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({kind,name,code,departmentCode:Number(department)})});
-  const data=await r.json();if(!r.ok)throw new Error(data.error||'Could not save.');
-  setNotice(kind==='department'? `Department ${data.entry.code} created.`:kind==='qualification'?`Qualification #${data.entry.id} created with suffix ${data.entry.code}.`:`Job title #${data.entry.id} created.`);
-  setName('');setCode('');onSaved();
- }catch(e){setError((e as Error).message);}finally{setBusy(false);}}
- return <><details ref={catalogElement} id="staff-catalog" className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-5"><summary className="cursor-pointer font-semibold">Company catalogs <span className="ml-2 text-xs font-normal text-slate-500">{catalog.departments.length} departments · {catalog.jobTitles.length} job titles · {catalog.qualifications.length} qualifications</span></summary>
- <p className="mt-3 text-sm text-slate-500">Add company departments, job titles and completed qualifications. Numbers are allocated automatically. Website access remains User, Employee, Manager or Admin.</p>
- <div className="mt-4 grid gap-4 sm:grid-cols-2"><label className="text-xs">Catalog<ThemedSelect className={field} value={kind} onChange={e=>{setKind(e.target.value);setError('');setNotice('');}}><option value="department">Department</option><option value="job_title">Company job title</option><option value="qualification">Qualification</option></ThemedSelect></label>
- <label className="text-xs">Full name<input className={field} value={name} maxLength={160} onChange={e=>setName(e.target.value)} placeholder={kind==='department'?'New company department':kind==='job_title'?'Assistant Software Developer':'Full qualification name'}/></label>
- {kind==='qualification'&&<label className="text-xs">Unique ID suffix<input className={field} value={code} maxLength={16} onChange={e=>setCode(e.target.value.toUpperCase())} placeholder="Example: MTECH"/><span className="mt-1 block text-slate-500">Letters only. Existing suffixes cannot be reused.</span></label>}
- {kind==='job_title'&&<label className="text-xs">Department<ThemedSelect className={field} value={department} onChange={e=>setDepartment(e.target.value)}><option value="">Select department</option>{catalog.departments.map(d=><option key={d.code} value={d.code}>{d.code} · {d.name}</option>)}</ThemedSelect></label>}
- </div><button type="button" disabled={busy||!name.trim()||(kind==='qualification'&&!/^[A-Z]{1,16}$/.test(code))||(kind==='job_title'&&!department)} onClick={()=>void create()} className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"><Plus size={16}/>{busy?'Saving…':'Add to catalog'}</button>
- {notice&&<p role="status" className="mt-3 flex items-center gap-2 text-sm text-emerald-700"><CheckCircle2 size={16}/>{notice}</p>}{error&&<p role="alert" className="mt-3 text-sm text-rose-700">{error}</p>}
- <div className="mt-4 grid gap-3 md:grid-cols-3">{[{label:'Departments',items:catalog.departments.map(x=>`${x.code} · ${x.name}`)},{label:'Job titles',items:catalog.jobTitles.map(x=>`${x.id} · ${x.name}`)},{label:'Qualifications',items:catalog.qualifications.map(x=>`${x.id} · ${x.name} (${x.code})`)}].map(group=><details key={group.label} className="rounded-xl bg-slate-50 p-3"><summary className="cursor-pointer text-sm font-medium">{group.label}</summary><ul className="mt-2 max-h-56 space-y-2 overflow-auto text-xs text-slate-600">{group.items.map(item=><li key={item} className="flex items-center justify-between gap-2"><span>{item}</span>{group.label==='Departments'&&<button type="button" disabled={busy} aria-label={`Delete department ${item}`} className="rounded-md p-1.5 text-rose-600 hover:bg-rose-50 disabled:opacity-40" onClick={()=>{const selected=catalog.departments.find(d=>d.code===Number(item.split(' · ')[0]));if(selected){setError('');setRemoving(selected);}}}><Trash2 className="size-3.5"/></button>}</li>)}{!group.items.length&&<li>No entries yet.</li>}</ul></details>)}</div></details><dialog ref={removeDialog} onCancel={()=>setRemoving(null)} aria-labelledby="delete-department-title" className="m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl backdrop:bg-slate-900/35"><h2 id="delete-department-title" className="text-lg font-semibold">Delete department?</h2><p className="mt-3 font-medium">{removing?.code} · {removing?.name}</p><p className="mt-2 text-sm text-slate-500">Only unused departments can be deleted. Staff assignments, job titles and issued staff IDs prevent deletion. Its number will not be reused.</p>{error&&<p role="alert" className="mt-3 text-sm text-rose-700">{error}</p>}<div className="mt-5 flex justify-end gap-3"><button type="button" disabled={busy} className="rounded-lg border px-4 py-2 text-sm" onClick={()=>setRemoving(null)}>Keep department</button><button type="button" disabled={busy} className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40" onClick={async()=>{if(!removing)return;setBusy(true);setError('');try{const r=await fetch('/api/workspace/catalog',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:removing.code,confirmation:removing.name})});const data=await r.json();if(!r.ok)throw new Error(data.error||'Could not delete department.');setNotice(`Department ${data.entry.name} deleted. Its number is retained in the audit history.`);setRemoving(null);onSaved();}catch(e){setError((e as Error).message);}finally{setBusy(false);}}}>{busy?'Deleting…':'Delete department'}</button></div></dialog></>;
+import { useEffect, useRef, useState } from "react";
+import { Plus, CheckCircle2, Trash2 } from "lucide-react";
+import ThemedSelect from "@/components/themed-select";
+import type { StaffCatalog } from "@/lib/staff-catalog";
+const field = "mt-1 w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm";
+export default function StaffCatalogEditor({
+    catalog,
+    onSaved,
+}: {
+    catalog: StaffCatalog;
+    onSaved: () => void;
+}) {
+    const [removing, setRemoving] = useState<{ code: number; name: string } | null>(null);
+    const removeDialog = useRef<HTMLDialogElement>(null);
+    useEffect(() => {
+        const dialog = removeDialog.current;
+        if (removing && !dialog?.open) dialog?.showModal();
+        else if (!removing && dialog?.open) dialog.close();
+    }, [removing]);
+    const catalogElement = useRef<HTMLDetailsElement>(null);
+    useEffect(() => {
+        if (window.location.hash === "#staff-catalog" && catalogElement.current) {
+            catalogElement.current.open = true;
+            catalogElement.current.scrollIntoView({ block: "start" });
+        }
+    }, []);
+    const [kind, setKind] = useState("department"),
+        [name, setName] = useState(""),
+        [code, setCode] = useState(""),
+        [department, setDepartment] = useState(""),
+        [busy, setBusy] = useState(false),
+        [error, setError] = useState(""),
+        [notice, setNotice] = useState("");
+    async function create() {
+        setBusy(true);
+        setError("");
+        setNotice("");
+        try {
+            const r = await fetch("/api/workspace/catalog", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ kind, name, code, departmentCode: Number(department) }),
+            });
+            const data = await r.json();
+            if (!r.ok) throw new Error(data.error || "Could not save.");
+            setNotice(
+                kind === "department"
+                    ? `Department ${data.entry.code} created.`
+                    : kind === "qualification"
+                      ? `Qualification #${data.entry.id} created with suffix ${data.entry.code}.`
+                      : `Job title #${data.entry.id} created.`,
+            );
+            setName("");
+            setCode("");
+            onSaved();
+        } catch (e) {
+            setError((e as Error).message);
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <>
+            <details
+                ref={catalogElement}
+                id="staff-catalog"
+                className="scroll-mt-6 rounded-2xl border border-slate-200 bg-white p-5"
+            >
+                <summary className="cursor-pointer font-semibold">
+                    Company catalogs{" "}
+                    <span className="ml-2 text-xs font-normal text-slate-500">
+                        {catalog.departments.length} departments · {catalog.jobTitles.length} job
+                        titles · {catalog.qualifications.length} qualifications
+                    </span>
+                </summary>
+                <p className="mt-3 text-sm text-slate-500">
+                    Add company departments, job titles and completed qualifications. Numbers are
+                    allocated automatically. Website access remains User, Employee, Manager or
+                    Admin.
+                </p>
+                <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                    <label className="text-xs">
+                        Catalog
+                        <ThemedSelect
+                            className={field}
+                            value={kind}
+                            onChange={(e) => {
+                                setKind(e.target.value);
+                                setError("");
+                                setNotice("");
+                            }}
+                        >
+                            <option value="department">Department</option>
+                            <option value="job_title">Company job title</option>
+                            <option value="qualification">Qualification</option>
+                        </ThemedSelect>
+                    </label>
+                    <label className="text-xs">
+                        Full name
+                        <input
+                            className={field}
+                            value={name}
+                            maxLength={160}
+                            onChange={(e) => setName(e.target.value)}
+                            placeholder={
+                                kind === "department"
+                                    ? "New company department"
+                                    : kind === "job_title"
+                                      ? "Assistant Software Developer"
+                                      : "Full qualification name"
+                            }
+                        />
+                    </label>
+                    {kind === "qualification" && (
+                        <label className="text-xs">
+                            Unique ID suffix
+                            <input
+                                className={field}
+                                value={code}
+                                maxLength={16}
+                                onChange={(e) => setCode(e.target.value.toUpperCase())}
+                                placeholder="Example: MTECH"
+                            />
+                            <span className="mt-1 block text-slate-500">
+                                Letters only. Existing suffixes cannot be reused.
+                            </span>
+                        </label>
+                    )}
+                    {kind === "job_title" && (
+                        <label className="text-xs">
+                            Department
+                            <ThemedSelect
+                                className={field}
+                                value={department}
+                                onChange={(e) => setDepartment(e.target.value)}
+                            >
+                                <option value="">Select department</option>
+                                {catalog.departments.map((d) => (
+                                    <option key={d.code} value={d.code}>
+                                        {d.code} · {d.name}
+                                    </option>
+                                ))}
+                            </ThemedSelect>
+                        </label>
+                    )}
+                </div>
+                <button
+                    type="button"
+                    disabled={
+                        busy ||
+                        !name.trim() ||
+                        (kind === "qualification" && !/^[A-Z]{1,16}$/.test(code)) ||
+                        (kind === "job_title" && !department)
+                    }
+                    onClick={() => void create()}
+                    className="mt-4 inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-700 disabled:opacity-40"
+                >
+                    <Plus size={16} />
+                    {busy ? "Saving…" : "Add to catalog"}
+                </button>
+                {notice && (
+                    <p
+                        role="status"
+                        className="mt-3 flex items-center gap-2 text-sm text-emerald-700"
+                    >
+                        <CheckCircle2 size={16} />
+                        {notice}
+                    </p>
+                )}
+                {error && (
+                    <p role="alert" className="mt-3 text-sm text-rose-700">
+                        {error}
+                    </p>
+                )}
+                <div className="mt-4 grid gap-3 md:grid-cols-3">
+                    {[
+                        {
+                            label: "Departments",
+                            items: catalog.departments.map((x) => `${x.code} · ${x.name}`),
+                        },
+                        {
+                            label: "Job titles",
+                            items: catalog.jobTitles.map((x) => `${x.id} · ${x.name}`),
+                        },
+                        {
+                            label: "Qualifications",
+                            items: catalog.qualifications.map(
+                                (x) => `${x.id} · ${x.name} (${x.code})`,
+                            ),
+                        },
+                    ].map((group) => (
+                        <details key={group.label} className="rounded-xl bg-slate-50 p-3">
+                            <summary className="cursor-pointer text-sm font-medium">
+                                {group.label}
+                            </summary>
+                            <ul className="mt-2 max-h-56 space-y-2 overflow-auto text-xs text-slate-600">
+                                {group.items.map((item) => (
+                                    <li
+                                        key={item}
+                                        className="flex items-center justify-between gap-2"
+                                    >
+                                        <span>{item}</span>
+                                        {group.label === "Departments" && (
+                                            <button
+                                                type="button"
+                                                disabled={busy}
+                                                aria-label={`Delete department ${item}`}
+                                                className="rounded-md p-1.5 text-rose-600 hover:bg-rose-50 disabled:opacity-40"
+                                                onClick={() => {
+                                                    const selected = catalog.departments.find(
+                                                        (d) =>
+                                                            d.code === Number(item.split(" · ")[0]),
+                                                    );
+                                                    if (selected) {
+                                                        setError("");
+                                                        setRemoving(selected);
+                                                    }
+                                                }}
+                                            >
+                                                <Trash2 className="size-3.5" />
+                                            </button>
+                                        )}
+                                    </li>
+                                ))}
+                                {!group.items.length && <li>No entries yet.</li>}
+                            </ul>
+                        </details>
+                    ))}
+                </div>
+            </details>
+            <dialog
+                ref={removeDialog}
+                onCancel={() => setRemoving(null)}
+                aria-labelledby="delete-department-title"
+                className="m-auto w-[calc(100%_-_2rem)] max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-xl backdrop:bg-slate-900/35"
+            >
+                <h2 id="delete-department-title" className="text-lg font-semibold">
+                    Delete department?
+                </h2>
+                <p className="mt-3 font-medium">
+                    {removing?.code} · {removing?.name}
+                </p>
+                <p className="mt-2 text-sm text-slate-500">
+                    Only unused departments can be deleted. Staff assignments, job titles and issued
+                    staff IDs prevent deletion. Its number will not be reused.
+                </p>
+                {error && (
+                    <p role="alert" className="mt-3 text-sm text-rose-700">
+                        {error}
+                    </p>
+                )}
+                <div className="mt-5 flex justify-end gap-3">
+                    <button
+                        type="button"
+                        disabled={busy}
+                        className="rounded-lg border px-4 py-2 text-sm"
+                        onClick={() => setRemoving(null)}
+                    >
+                        Keep department
+                    </button>
+                    <button
+                        type="button"
+                        disabled={busy}
+                        className="rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+                        onClick={async () => {
+                            if (!removing) return;
+                            setBusy(true);
+                            setError("");
+                            try {
+                                const r = await fetch("/api/workspace/catalog", {
+                                    method: "DELETE",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({
+                                        code: removing.code,
+                                        confirmation: removing.name,
+                                    }),
+                                });
+                                const data = await r.json();
+                                if (!r.ok)
+                                    throw new Error(data.error || "Could not delete department.");
+                                setNotice(
+                                    `Department ${data.entry.name} deleted. Its number is retained in the audit history.`,
+                                );
+                                setRemoving(null);
+                                onSaved();
+                            } catch (e) {
+                                setError((e as Error).message);
+                            } finally {
+                                setBusy(false);
+                            }
+                        }}
+                    >
+                        {busy ? "Deleting…" : "Delete department"}
+                    </button>
+                </div>
+            </dialog>
+        </>
+    );
 }
-

@@ -1,52 +1,232 @@
-import 'dotenv/config';
-import assert from 'node:assert/strict';
-import {createRequire} from 'node:module';
-import {randomUUID} from 'node:crypto';
-import {readFileSync} from 'node:fs';
-import pg from 'pg';
-import ts from 'typescript';
-const require=createRequire(import.meta.url);
-import {load} from './helpers/load-ts.mjs';
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:1,connectionTimeoutMillis:10000}),client=await pool.connect();
-const db={query:(sql,args)=>client.query(sql,args)};
-const catalog=load('lib/integrations/catalog.ts'),transport=load('lib/eassist/transport.ts');
-const access={integrationAccess:async()=>({admin:true,canCreate:true,own:[],grants:[]}),requireIntegrationAccess:async()=>{}};
-const registry=load('lib/integrations/registry.ts',{'../db':{db},'../eassist/transport':transport,'./catalog':catalog,'./access':access});
-const store=load('lib/integrations/store.ts',{'../db':{db},'../eassist/transport':transport,'./registry':registry,'./catalog':catalog});
-const project=load('lib/integrations/project-tools.ts',{'../db':{db},'../eassist/transport':transport,'./registry':registry,'./store':store});
-const runtime=load('lib/integrations/runtime.ts',{'./access':access,'../db':{db},'../eassist/transport':transport,'../eassist/security':{securityPolicy:async()=>({allow_runs:true,allow_writes:true,allow_deletes:false,max_concurrent:3})},'../workspace-access':{workspaceAccess:async()=>({role:'admin'})},'../workspace-permissions':{permitted:()=>true},'./registry':registry,'./catalog':catalog,'./store':store,'./transport':{external:async()=>{throw Error('NO NETWORK ALLOWED IN THIS TEST');}}});
-const monitor=load('lib/integrations/monitor.ts',{'./access':access,'../db':{db},'../eassist/transport':transport,'./runtime':runtime});
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import pg from "pg";
+import ts from "typescript";
+const require = createRequire(import.meta.url);
+import { load } from "./helpers/load-ts.mjs";
+const pool = new pg.Pool({
+        connectionString: process.env.DATABASE_URL,
+        max: 1,
+        connectionTimeoutMillis: 10000,
+    }),
+    client = await pool.connect();
+const db = { query: (sql, args) => client.query(sql, args) };
+const catalog = load("lib/integrations/catalog.ts"),
+    transport = load("lib/eassist/transport.ts");
+const access = {
+    integrationAccess: async () => ({ admin: true, canCreate: true, own: [], grants: [] }),
+    requireIntegrationAccess: async () => {},
+};
+const registry = load("lib/integrations/registry.ts", {
+    "../db": { db },
+    "../eassist/transport": transport,
+    "./catalog": catalog,
+    "./access": access,
+});
+const store = load("lib/integrations/store.ts", {
+    "../db": { db },
+    "../eassist/transport": transport,
+    "./registry": registry,
+    "./catalog": catalog,
+});
+const project = load("lib/integrations/project-tools.ts", {
+    "../db": { db },
+    "../eassist/transport": transport,
+    "./registry": registry,
+    "./store": store,
+});
+const runtime = load("lib/integrations/runtime.ts", {
+    "./access": access,
+    "../db": { db },
+    "../eassist/transport": transport,
+    "../eassist/security": {
+        securityPolicy: async () => ({
+            allow_runs: true,
+            allow_writes: true,
+            allow_deletes: false,
+            max_concurrent: 3,
+        }),
+    },
+    "../workspace-access": { workspaceAccess: async () => ({ role: "admin" }) },
+    "../workspace-permissions": { permitted: () => true },
+    "./registry": registry,
+    "./catalog": catalog,
+    "./store": store,
+    "./transport": {
+        external: async () => {
+            throw Error("NO NETWORK ALLOWED IN THIS TEST");
+        },
+    },
+});
+const monitor = load("lib/integrations/monitor.ts", {
+    "./access": access,
+    "../db": { db },
+    "../eassist/transport": transport,
+    "./runtime": runtime,
+});
 try {
- await client.query('BEGIN');
- const user=randomUUID();
- await client.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',[user,'Integration fixture',`${user}@example.invalid`]);
- await store.saveConnection(user,'servicenow',{enabled:true,config:{baseUrl:'https://fixture.invalid',username:'fixture',password:'fixture-secret-not-production'}});
- const saved=(await client.query('SELECT * FROM integration_connections WHERE user_id=$1',[user])).rows[0];
- assert.equal(saved.revision,1);assert.ok(!JSON.stringify(saved).includes('fixture-secret-not-production'));assert.equal((await store.loadConnection(user,'servicenow')).secrets.password,'fixture-secret-not-production');
- const preview=await runtime.prepareIntegration(user,'servicenow','create',{body:{short_description:'Fixture only'}},{agentId:'fixture-agent',graphHash:'fixture-graph',nodeId:'fixture-node'});
- const approval=(await client.query('SELECT * FROM integration_approvals WHERE user_id=$1',[user])).rows[0];
- assert.ok(approval.connection_hash);assert.deepEqual(approval.context,{agentId:'fixture-agent',graphHash:'fixture-graph',nodeId:'fixture-node'});assert.ok(!approval.inputs_cipher.includes('Fixture only'));
- await assert.rejects(()=>runtime.approveIntegration(user,preview.token,{agentId:'other'}),e=>e.status===409);
- await store.saveConnection(user,'servicenow',{enabled:true,config:{baseUrl:'https://fixture.invalid',username:'fixture',password:''}});
- assert.equal((await store.loadConnection(user,'servicenow')).revision,2);assert.equal((await store.loadConnection(user,'servicenow')).secrets.password,'fixture-secret-not-production');
- await assert.rejects(()=>runtime.approveIntegration(user,preview.token,{agentId:'fixture-agent',graphHash:'fixture-graph',nodeId:'fixture-node'}),/connection changed/);
- await monitor.configureMonitor(user,'servicenow','incidents',{},300,true);
- const snapshot=await monitor.monitorSnapshot(user,'servicenow');assert.equal(snapshot.configured,true);assert.equal(snapshot.last_status,'not_checked');assert.equal(snapshot.lastRecordedResult,null);
- const claimed=(await client.query("WITH due AS (SELECT user_id,provider FROM integration_monitors WHERE user_id=$1 AND enabled AND next_run_at<=now() AND (lease_until IS NULL OR lease_until<now()) FOR UPDATE SKIP LOCKED LIMIT 2) UPDATE integration_monitors m SET lease_until=now()+interval '3 minutes' FROM due WHERE m.user_id=due.user_id AND m.provider=due.provider RETURNING m.provider",[user])).rows;
- assert.equal(claimed.length,1);
- const duplicate=await client.query("UPDATE integration_monitors SET lease_until=now()+interval '3 minutes' WHERE user_id=$1 AND (lease_until IS NULL OR lease_until<now()) RETURNING provider",[user]);assert.equal(duplicate.rowCount,0);
- const once=await client.query('UPDATE integration_approvals SET consumed_at=now() WHERE user_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now() RETURNING token_hash',[user,approval.token_hash]);assert.equal(once.rowCount,1);
- const twice=await client.query('UPDATE integration_approvals SET consumed_at=now() WHERE user_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now() RETURNING token_hash',[user,approval.token_hash]);assert.equal(twice.rowCount,0);
- await client.query('DELETE FROM integration_connections WHERE user_id=$1',[user]);assert.equal((await client.query('SELECT * FROM integration_monitors WHERE user_id=$1',[user])).rowCount,0);
- const custom=await registry.createProvider(user,{name:'Custom database fixture',description:'Fixture only',auth:'none',category:'Custom'});
- assert.equal((await registry.resolveProvider(user,custom.id)).name,'Custom database fixture');assert.equal(await registry.resolveProvider(randomUUID(),custom.id),undefined);
- await store.saveConnection(user,custom.id,{enabled:true,config:{baseUrl:'https://fixture.invalid',mapping:'[{"id":"lookup","label":"Lookup","path":"/assets"},{"id":"create","label":"Create","method":"POST","path":"/assets"}]'}});
- const toolId=await project.saveProjectBinding(user,{name:'Fixture project tool',provider:custom.id,operation:'lookup',defaults:{limit:10}});
- assert.equal((await project.resolveProjectBinding(user,toolId)).defaults.limit,10);assert.equal((await project.providerOperations(user)).find(p=>p.id===custom.id).configured,true);
- await project.saveProjectBinding(user,{id:toolId,name:'Updated fixture',provider:custom.id,operation:'create',defaults:{body:{name:'Fixture'}}});assert.equal((await project.resolveProjectBinding(user,toolId)).revision,2);
- await assert.rejects(()=>project.resolveProjectBinding(randomUUID(),toolId),e=>e.status===404);
- await client.query('UPDATE project_tool_bindings SET deleted_at=now(),revision=revision+1 WHERE user_id=$1 AND id=$2',[user,toolId]);await assert.rejects(()=>project.resolveProjectBinding(user,toolId),e=>e.status===404);
- await client.query('UPDATE integration_definitions SET deleted_at=now() WHERE user_id=$1 AND id=$2',[user,custom.id]);assert.equal(await registry.resolveProvider(user,custom.id),undefined);await assert.rejects(()=>runtime.prepareIntegration(user,custom.id,'lookup',{}),e=>e.status===404);
- console.log('PASS: real PostgreSQL migration schema, actual AES-GCM credential persistence/decryption, secret preservation, connection revisions, encrypted approval inputs/context, stale-approval rejection, monitor defaults/leases and cascade cleanup, one-use SQL consumption. Fixture transaction rolled back; no vendor API contacted.');
- console.log('PASS: real PostgreSQL custom integration definitions, custom project-tool create/edit/defaults/revision, owner isolation, hidden integrations and deleted tool execution denial. Fixture transaction rolled back.');
-}finally{await client.query('ROLLBACK');client.release();await pool.end();}
+    await client.query("BEGIN");
+    const user = randomUUID();
+    await client.query(
+        'INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',
+        [user, "Integration fixture", `${user}@example.invalid`],
+    );
+    await store.saveConnection(user, "servicenow", {
+        enabled: true,
+        config: {
+            baseUrl: "https://fixture.invalid",
+            username: "fixture",
+            password: "fixture-secret-not-production",
+        },
+    });
+    const saved = (
+        await client.query("SELECT * FROM integration_connections WHERE user_id=$1", [user])
+    ).rows[0];
+    assert.equal(saved.revision, 1);
+    assert.ok(!JSON.stringify(saved).includes("fixture-secret-not-production"));
+    assert.equal(
+        (await store.loadConnection(user, "servicenow")).secrets.password,
+        "fixture-secret-not-production",
+    );
+    const preview = await runtime.prepareIntegration(
+        user,
+        "servicenow",
+        "create",
+        { body: { short_description: "Fixture only" } },
+        { agentId: "fixture-agent", graphHash: "fixture-graph", nodeId: "fixture-node" },
+    );
+    const approval = (
+        await client.query("SELECT * FROM integration_approvals WHERE user_id=$1", [user])
+    ).rows[0];
+    assert.ok(approval.connection_hash);
+    assert.deepEqual(approval.context, {
+        agentId: "fixture-agent",
+        graphHash: "fixture-graph",
+        nodeId: "fixture-node",
+    });
+    assert.ok(!approval.inputs_cipher.includes("Fixture only"));
+    await assert.rejects(
+        () => runtime.approveIntegration(user, preview.token, { agentId: "other" }),
+        (e) => e.status === 409,
+    );
+    await store.saveConnection(user, "servicenow", {
+        enabled: true,
+        config: { baseUrl: "https://fixture.invalid", username: "fixture", password: "" },
+    });
+    assert.equal((await store.loadConnection(user, "servicenow")).revision, 2);
+    assert.equal(
+        (await store.loadConnection(user, "servicenow")).secrets.password,
+        "fixture-secret-not-production",
+    );
+    await assert.rejects(
+        () =>
+            runtime.approveIntegration(user, preview.token, {
+                agentId: "fixture-agent",
+                graphHash: "fixture-graph",
+                nodeId: "fixture-node",
+            }),
+        /connection changed/,
+    );
+    await monitor.configureMonitor(user, "servicenow", "incidents", {}, 300, true);
+    const snapshot = await monitor.monitorSnapshot(user, "servicenow");
+    assert.equal(snapshot.configured, true);
+    assert.equal(snapshot.last_status, "not_checked");
+    assert.equal(snapshot.lastRecordedResult, null);
+    const claimed = (
+        await client.query(
+            "WITH due AS (SELECT user_id,provider FROM integration_monitors WHERE user_id=$1 AND enabled AND next_run_at<=now() AND (lease_until IS NULL OR lease_until<now()) FOR UPDATE SKIP LOCKED LIMIT 2) UPDATE integration_monitors m SET lease_until=now()+interval '3 minutes' FROM due WHERE m.user_id=due.user_id AND m.provider=due.provider RETURNING m.provider",
+            [user],
+        )
+    ).rows;
+    assert.equal(claimed.length, 1);
+    const duplicate = await client.query(
+        "UPDATE integration_monitors SET lease_until=now()+interval '3 minutes' WHERE user_id=$1 AND (lease_until IS NULL OR lease_until<now()) RETURNING provider",
+        [user],
+    );
+    assert.equal(duplicate.rowCount, 0);
+    const once = await client.query(
+        "UPDATE integration_approvals SET consumed_at=now() WHERE user_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now() RETURNING token_hash",
+        [user, approval.token_hash],
+    );
+    assert.equal(once.rowCount, 1);
+    const twice = await client.query(
+        "UPDATE integration_approvals SET consumed_at=now() WHERE user_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now() RETURNING token_hash",
+        [user, approval.token_hash],
+    );
+    assert.equal(twice.rowCount, 0);
+    await client.query("DELETE FROM integration_connections WHERE user_id=$1", [user]);
+    assert.equal(
+        (await client.query("SELECT * FROM integration_monitors WHERE user_id=$1", [user]))
+            .rowCount,
+        0,
+    );
+    const custom = await registry.createProvider(user, {
+        name: "Custom database fixture",
+        description: "Fixture only",
+        auth: "none",
+        category: "Custom",
+    });
+    assert.equal((await registry.resolveProvider(user, custom.id)).name, "Custom database fixture");
+    assert.equal(await registry.resolveProvider(randomUUID(), custom.id), undefined);
+    await store.saveConnection(user, custom.id, {
+        enabled: true,
+        config: {
+            baseUrl: "https://fixture.invalid",
+            mapping:
+                '[{"id":"lookup","label":"Lookup","path":"/assets"},{"id":"create","label":"Create","method":"POST","path":"/assets"}]',
+        },
+    });
+    const toolId = await project.saveProjectBinding(user, {
+        name: "Fixture project tool",
+        provider: custom.id,
+        operation: "lookup",
+        defaults: { limit: 10 },
+    });
+    assert.equal((await project.resolveProjectBinding(user, toolId)).defaults.limit, 10);
+    assert.equal(
+        (await project.providerOperations(user)).find((p) => p.id === custom.id).configured,
+        true,
+    );
+    await project.saveProjectBinding(user, {
+        id: toolId,
+        name: "Updated fixture",
+        provider: custom.id,
+        operation: "create",
+        defaults: { body: { name: "Fixture" } },
+    });
+    assert.equal((await project.resolveProjectBinding(user, toolId)).revision, 2);
+    await assert.rejects(
+        () => project.resolveProjectBinding(randomUUID(), toolId),
+        (e) => e.status === 404,
+    );
+    await client.query(
+        "UPDATE project_tool_bindings SET deleted_at=now(),revision=revision+1 WHERE user_id=$1 AND id=$2",
+        [user, toolId],
+    );
+    await assert.rejects(
+        () => project.resolveProjectBinding(user, toolId),
+        (e) => e.status === 404,
+    );
+    await client.query(
+        "UPDATE integration_definitions SET deleted_at=now() WHERE user_id=$1 AND id=$2",
+        [user, custom.id],
+    );
+    assert.equal(await registry.resolveProvider(user, custom.id), undefined);
+    await assert.rejects(
+        () => runtime.prepareIntegration(user, custom.id, "lookup", {}),
+        (e) => e.status === 404,
+    );
+    console.log(
+        "PASS: real PostgreSQL migration schema, actual AES-GCM credential persistence/decryption, secret preservation, connection revisions, encrypted approval inputs/context, stale-approval rejection, monitor defaults/leases and cascade cleanup, one-use SQL consumption. Fixture transaction rolled back; no vendor API contacted.",
+    );
+    console.log(
+        "PASS: real PostgreSQL custom integration definitions, custom project-tool create/edit/defaults/revision, owner isolation, hidden integrations and deleted tool execution denial. Fixture transaction rolled back.",
+    );
+} finally {
+    await client.query("ROLLBACK");
+    client.release();
+    await pool.end();
+}

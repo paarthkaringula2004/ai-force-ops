@@ -1,5 +1,5 @@
 import WorkspaceTransition from "@/components/workspace-transition";
 
 export default function Loading() {
-  return <WorkspaceTransition destination="Review Center" />;
+    return <WorkspaceTransition destination="Review Center" />;
 }

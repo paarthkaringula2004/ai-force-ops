@@ -1,24 +1,15 @@
 "use client";
 
-
-
 import "@xyflow/react/dist/style.css";
-import {Outfit} from "next/font/google";
-import {workflowNodeTypes} from "../../_costumNodes/workflow-node-types";
+import { Outfit } from "next/font/google";
+import { workflowNodeTypes } from "../../_costumNodes/workflow-node-types";
 
 import {
-
-  Background,
-
-  BackgroundVariant,
-
-  Controls,
-
-  ReactFlow,
-
-  ReactFlowProvider,
-
-
+    Background,
+    BackgroundVariant,
+    Controls,
+    ReactFlow,
+    ReactFlowProvider,
 } from "@xyflow/react";
 
 import { useParams, useRouter } from "next/navigation";
@@ -43,297 +34,569 @@ import AgentStudioChart from "@/components/agent-studio-chart";
 
 import type { StudioChart } from "@/lib/agent-studio-charts";
 
-
 import type { StudioTrace, StudioApproval } from "@/lib/agent-studio-runtime";
 
-
-
-
-
-
-
-
-
-
-const originalOutfit = Outfit({subsets:["latin"]});
+const originalOutfit = Outfit({ subsets: ["latin"] });
 
 type Message = { role: "user" | "assistant"; content: string; charts?: StudioChart[] };
 
-
-
 function PreviewWorkspace({ agentId }: { agentId: string }) {
+    const router = useRouter();
 
-  const router = useRouter();
+    const [agent, setAgent] = useState<AgentRecord | null>(null);
 
-  const [agent, setAgent] = useState<AgentRecord | null>(null);
+    const [graph, setGraph] = useState<WorkflowGraph>({ nodes: [], edges: [] });
 
-  const [graph, setGraph] = useState<WorkflowGraph>({ nodes: [], edges: [] });
+    const [loading, setLoading] = useState(true);
 
-  const [loading, setLoading] = useState(true);
+    const [loadError, setLoadError] = useState("");
 
-  const [loadError, setLoadError] = useState("");
+    const [messages, setMessages] = useState<Message[]>([]);
 
-  const [messages, setMessages] = useState<Message[]>([]);
+    const [input, setInput] = useState("");
 
-  const [input, setInput] = useState("");
+    const [sending, setSending] = useState(false);
 
-  const [sending, setSending] = useState(false);
+    const [chatError, setChatError] = useState("");
 
-  const [chatError, setChatError] = useState("");
+    const [trace, setTrace] = useState<StudioTrace[]>([]);
 
-  const [trace, setTrace] = useState<StudioTrace[]>([]);
+    const [approvals, setApprovals] = useState<StudioApproval[]>([]);
 
-  const [approvals, setApprovals] = useState<StudioApproval[]>([]);
+    const messagesRef = useRef<HTMLDivElement>(null);
 
-  const messagesRef = useRef<HTMLDivElement>(null);
+    const actual = graph.nodes.some(
+        (node) => node.type === "StartNode" && node.data.workflowMode === "actual",
+    );
+    const renderedNodeTypes = useMemo(() => workflowNodeTypes(actual), [actual]);
+    const agentNode = graph.nodes.find((node) => node.type === "AgentNode");
 
+    const agentNodeSettings =
+        agentNode?.data.settings && typeof agentNode.data.settings === "object"
+            ? (agentNode.data.settings as Record<string, unknown>)
+            : {};
 
-  const actual = graph.nodes.some(node=>node.type==="StartNode"&&node.data.workflowMode==="actual");
-  const renderedNodeTypes = useMemo(()=>workflowNodeTypes(actual),[actual]);
-  const agentNode = graph.nodes.find((node) => node.type === "AgentNode");
+    const modelNode = graph.nodes.find(
+        (node) =>
+            node.type === "ModelNode" &&
+            graph.edges.some((edge) => edge.source === agentNode?.id && edge.target === node.id),
+    );
 
-  const agentNodeSettings = agentNode?.data.settings && typeof agentNode.data.settings === "object" ? agentNode.data.settings as Record<string, unknown> : {};
+    const previewModel =
+        typeof modelNode?.data.modelId === "string" && modelNode.data.modelId
+            ? modelNode.data.modelId
+            : typeof agentNode?.data.modelId === "string" && agentNode.data.modelId
+              ? agentNode.data.modelId
+              : typeof agentNodeSettings.model === "string"
+                ? agentNodeSettings.model
+                : (agent?.modelId ?? "");
 
-  const modelNode = graph.nodes.find(node => node.type === "ModelNode" && graph.edges.some(edge => edge.source === agentNode?.id && edge.target === node.id));
+    const previewInstructions =
+        typeof agentNode?.data.instructions === "string" && agentNode.data.instructions
+            ? agentNode.data.instructions
+            : typeof agentNodeSettings.instruction === "string"
+              ? agentNodeSettings.instruction
+              : (agent?.instructions ?? "");
 
-  const previewModel = typeof modelNode?.data.modelId === "string" && modelNode.data.modelId ? modelNode.data.modelId : typeof agentNode?.data.modelId === "string" && agentNode.data.modelId ? agentNode.data.modelId : typeof agentNodeSettings.model === "string" ? agentNodeSettings.model : agent?.modelId ?? "";
+    const includeChatHistory =
+        typeof agentNode?.data.includeHistory === "boolean"
+            ? agentNode.data.includeHistory
+            : typeof agentNodeSettings.includeHistory === "boolean"
+              ? agentNodeSettings.includeHistory
+              : true;
 
-  const previewInstructions = typeof agentNode?.data.instructions === "string" && agentNode.data.instructions ? agentNode.data.instructions : typeof agentNodeSettings.instruction === "string" ? agentNodeSettings.instruction : agent?.instructions ?? "";
+    const previewOutput = agentNode?.data.output ?? agentNodeSettings.output;
 
-  const includeChatHistory = typeof agentNode?.data.includeHistory === "boolean" ? agentNode.data.includeHistory : typeof agentNodeSettings.includeHistory === "boolean" ? agentNodeSettings.includeHistory : true;
+    const previewSchema =
+        typeof agentNode?.data.schema === "string"
+            ? agentNode.data.schema
+            : typeof agentNodeSettings.schema === "string"
+              ? agentNodeSettings.schema
+              : "";
 
-  const previewOutput = agentNode?.data.output ?? agentNodeSettings.output;
+    const previewContext =
+        typeof agentNode?.data.context === "string"
+            ? agentNode.data.context
+            : typeof agentNodeSettings.context === "string"
+              ? agentNodeSettings.context
+              : "";
 
-  const previewSchema = typeof agentNode?.data.schema === "string" ? agentNode.data.schema : typeof agentNodeSettings.schema === "string" ? agentNodeSettings.schema : "";
+    useEffect(() => {
+        const controller = new AbortController();
 
-  const previewContext = typeof agentNode?.data.context === "string" ? agentNode.data.context : typeof agentNodeSettings.context === "string" ? agentNodeSettings.context : "";
+        async function load() {
+            try {
+                const [agentResponse, workflowResponse] = await Promise.all([
+                    fetch(`/api/agents/${encodeURIComponent(agentId)}`, {
+                        signal: controller.signal,
+                    }),
 
+                    fetch(`/api/agents/${encodeURIComponent(agentId)}/workflow`, {
+                        signal: controller.signal,
+                    }),
+                ]);
 
+                const agentData = await agentResponse.json();
 
-  useEffect(() => {
+                const workflowData = await workflowResponse.json();
 
-    const controller = new AbortController();
+                if (!agentResponse.ok)
+                    throw new Error(agentData.error || "Could not load this agent.");
 
-    async function load() {
+                if (!workflowResponse.ok)
+                    throw new Error(workflowData.error || "Could not load this workflow.");
 
-      try {
+                setAgent(agentData.agent as AgentRecord);
 
-        const [agentResponse, workflowResponse] = await Promise.all([
+                const nextGraph = workflowData.graph
+                    ? workflowPreviewGraph(workflowData.graph.nodes, workflowData.graph.edges)
+                    : { nodes: [], edges: [] };
 
-          fetch(`/api/agents/${encodeURIComponent(agentId)}`, { signal: controller.signal }),
+                setGraph(nextGraph);
+            } catch (error) {
+                if (controller.signal.aborted) return;
 
-          fetch(`/api/agents/${encodeURIComponent(agentId)}/workflow`, { signal: controller.signal }),
+                setLoadError(
+                    error instanceof Error ? error.message : "Could not load this agent preview.",
+                );
+            } finally {
+                if (!controller.signal.aborted) setLoading(false);
+            }
+        }
 
-        ]);
+        void load();
 
-        const agentData = await agentResponse.json();
+        return () => controller.abort();
+    }, [agentId]);
 
-        const workflowData = await workflowResponse.json();
+    useEffect(() => {
+        if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
+    }, [messages]);
 
-        if (!agentResponse.ok) throw new Error(agentData.error || "Could not load this agent.");
+    async function sendMessage(event: FormEvent<HTMLFormElement>) {
+        event.preventDefault();
 
-        if (!workflowResponse.ok) throw new Error(workflowData.error || "Could not load this workflow.");
+        const text = input.trim();
 
-        setAgent(agentData.agent as AgentRecord);
+        if (!text.trim() || !agent || sending) return;
 
-        const nextGraph = workflowData.graph
+        if (!previewModel) {
+            setChatError("Choose a model for this agent before testing it.");
 
-          ? workflowPreviewGraph(workflowData.graph.nodes, workflowData.graph.edges)
+            return;
+        }
 
-          : { nodes: [], edges: [] };
+        const history = messages.filter((message) => message.content.trim());
 
-        setGraph(nextGraph);
+        const nextMessages: Message[] = [...history, { role: "user", content: text }];
 
-      } catch (error) {
+        const instructions = [
+            previewInstructions,
+            previewContext ? `Additional context:\n${previewContext}` : "",
+            previewOutput === "Json" && previewSchema
+                ? `Return valid JSON matching this schema:\n${previewSchema}`
+                : "",
+        ]
+            .filter(Boolean)
+            .join("\n\n");
 
-        if (controller.signal.aborted) return;
+        setMessages([...nextMessages, { role: "assistant", content: "" }]);
 
-        setLoadError(error instanceof Error ? error.message : "Could not load this agent preview.");
+        setInput("");
 
-      } finally {
+        setChatError("");
 
-        if (!controller.signal.aborted) setLoading(false);
+        setSending(true);
 
-      }
+        try {
+            const response = await fetch(`/api/agents/${agentId}/run`, {
+                method: "POST",
 
+                headers: { "Content-Type": "application/json" },
+
+                body: JSON.stringify({
+                    agentId,
+                    model: previewModel,
+                    instructions,
+                    messages: includeChatHistory ? nextMessages : [{ role: "user", content: text }],
+                }),
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) throw new Error(data.error || "The agent request failed.");
+
+            setTrace(data.trace || []);
+            setApprovals(data.approvals || []);
+
+            setMessages((current) =>
+                current.map((message, index) =>
+                    index === current.length - 1
+                        ? {
+                              ...message,
+                              charts: data.charts || [],
+                              content: data.reply || "The agent completed without a text response.",
+                          }
+                        : message,
+                ),
+            );
+        } catch (error) {
+            setMessages(history);
+
+            setInput(text);
+
+            setChatError(error instanceof Error ? error.message : "Could not reach the agent.");
+        } finally {
+            setSending(false);
+        }
     }
 
-    void load();
+    async function confirmTool(
+        approval: StudioApproval,
+        decision: "approve" | "reject" = "approve",
+    ) {
+        setSending(true);
+        setChatError("");
 
-    return () => controller.abort();
-
-  }, [agentId]);
-
-
-
-  useEffect(() => {
-
-    if (messagesRef.current) messagesRef.current.scrollTop = messagesRef.current.scrollHeight;
-
-  }, [messages]);
-
-
-
-  async function sendMessage(event: FormEvent<HTMLFormElement>) {
-
-    event.preventDefault();
-
-    const text = input.trim();
-
-    if (!text.trim() || !agent || sending) return;
-
-    if (!previewModel) {
-
-      setChatError("Choose a model for this agent before testing it.");
-
-      return;
-
+        try {
+            const response = await fetch(`/api/agents/${approval.agentId}/run`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(
+                    approval.kind === "flow"
+                        ? { flowApprovalToken: approval.token, decision }
+                        : { approvalToken: approval.token },
+                ),
+            });
+            const data = await response.json();
+            if (!response.ok) throw new Error(data.error);
+            setMessages((current) => [...current, { role: "assistant", content: data.reply }]);
+            if (approval.kind === "flow") {
+                setTrace(data.trace || []);
+                setApprovals((current) => [...current, ...(data.approvals || [])]);
+            }
+        } catch (error) {
+            setChatError(
+                error instanceof Error
+                    ? error.message
+                    : "This action failed. Check the source before retrying.",
+            );
+        } finally {
+            setApprovals((current) => current.filter((item) => item.token !== approval.token));
+            setSending(false);
+        }
     }
 
-    const history = messages.filter(message => message.content.trim());
-
-    const nextMessages: Message[] = [...history, { role: "user", content: text }];
-
-    const instructions = [previewInstructions, previewContext ? `Additional context:\n${previewContext}` : "", previewOutput === "Json" && previewSchema ? `Return valid JSON matching this schema:\n${previewSchema}` : ""].filter(Boolean).join("\n\n");
-
-    setMessages([...nextMessages, { role: "assistant", content: "" }]);
-
-    setInput("");
-
-    setChatError("");
-
-    setSending(true);
-
-    try {
-
-      const response = await fetch(`/api/agents/${agentId}/run`, {
-
-        method: "POST",
-
-        headers: { "Content-Type": "application/json" },
-
-        body: JSON.stringify({ agentId, model: previewModel, instructions, messages: includeChatHistory ? nextMessages : [{ role: "user", content: text }] }),
-
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) throw new Error(data.error || "The agent request failed.");
-
-      setTrace(data.trace || []); setApprovals(data.approvals || []);
-
-      setMessages((current) => current.map((message, index) => index === current.length - 1 ? { ...message, charts: data.charts || [], content: data.reply || "The agent completed without a text response." } : message));
-
-    } catch (error) {
-
-      setMessages(history);
-
-      setInput(text);
-
-      setChatError(error instanceof Error ? error.message : "Could not reach the agent.");
-
-    } finally {
-
-      setSending(false);
-
-    }
-
-  }
-
-
-
-  async function confirmTool(approval: StudioApproval, decision: "approve" | "reject" = "approve") {
-
-    setSending(true); setChatError("");
-
-    try { const response = await fetch(`/api/agents/${approval.agentId}/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(approval.kind === "flow" ? {flowApprovalToken:approval.token,decision} : { approvalToken: approval.token }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error); setMessages(current => [...current, { role: "assistant", content: data.reply }]); if(approval.kind === "flow") {setTrace(data.trace || []);setApprovals(current => [...current, ...(data.approvals || [])]);} }
-
-    catch (error) { setChatError(error instanceof Error ? error.message : "This action failed. Check the source before retrying."); }
-
-    finally { setApprovals(current => current.filter(item => item.token !== approval.token)); setSending(false); }
-
-  }
-
-  const noop = useCallback(() => {}, []);
-
-
-
-  if (loading) return <div className="flex h-dvh items-center justify-center text-sm text-[#7c8595]"><LoaderCircle className="mr-2 size-4 animate-spin" />Loading saved agent preview…</div>;
-
-  if (loadError || !agent) return <div className="flex h-dvh items-center justify-center p-5"><div className="max-w-md rounded-2xl border border-[#e7e9ef] bg-white p-7 text-center"><p role="alert" className="text-sm text-rose-700">{loadError || "Agent not found."}</p><button type="button" onClick={() => router.push(`/agent-builder/${encodeURIComponent(agentId)}`)} className="mt-4 rounded-lg bg-[#171923] px-4 py-2 text-xs font-semibold text-white">Back to builder</button></div></div>;
-
-
-
-  return <WorkflowContext.Provider value={{ addNode: noop, openToolLibrary: noop }}>
-
-    <div className="flex h-dvh min-h-[520px] flex-col overflow-hidden bg-[#f7f8fc] text-[#172033]">
-
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#e7e9ed] bg-white px-4 sm:px-6">
-
-        <div className="flex min-w-0 items-center gap-3"><button type="button" aria-label="Back to builder" onClick={() => router.push(`/agent-builder/${encodeURIComponent(agentId)}`)} className="flex size-9 items-center justify-center rounded-lg text-[#475467] hover:bg-[#f3f4f7]"><ArrowLeft className="size-5" /></button><div className="min-w-0"><h1 className="truncate text-[15px] font-semibold sm:text-[17px]">{agent.name}</h1><p className="text-[10px] text-[#8992a2]">Agent preview</p></div></div>
-
-
-      </header>
-
-      <main className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,2fr)_minmax(0,3fr)] gap-3 p-3 lg:grid-rows-1 lg:grid-cols-[minmax(0,3fr)_minmax(320px,1fr)] lg:gap-4 lg:p-5">
-
-        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-[#e4e7ee] bg-white p-4">
-
-          <div className="mb-3 flex shrink-0 items-center gap-2"><Eye className="size-4 text-[#6255e8]" /><h2 className="text-sm font-semibold">Preview</h2><span className="ml-auto text-[10px] text-[#8992a2]">Saved workflow · {graph.nodes.length} nodes</span></div>
-
-          <div className={`min-h-0 flex-1 overflow-hidden rounded-xl bg-[#f7f8fc] ${actual ? `actual-agent-canvas ${originalOutfit.className}` : ""}`}>
-
-            <ReactFlow<WorkflowNode, WorkflowEdge> nodes={graph.nodes} edges={graph.edges} nodeTypes={renderedNodeTypes} nodesDraggable={false} nodesConnectable={false} elementsSelectable={false} zoomOnDoubleClick={false} fitView fitViewOptions={{ padding: 0.22 }} minZoom={0.12} maxZoom={1.6} proOptions={{ hideAttribution: false }}>
-
-              <Background variant={BackgroundVariant.Dots} gap={18} size={1.6} color="#b9c1cf" />
-
-              <Controls position="bottom-left" showInteractive={false} />
-
-            </ReactFlow>
-
-          </div>
-
-          <p className="mt-3 text-[10px] leading-5 text-[#858e9d]">This preview displays your saved workflow. Chat uses the connected model, specialist agents, knowledge and tools. Connections are selected when relevant; disconnected items do not run.</p>
-
-        </section>
-
-        <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-[#e4e7ee] bg-white">
-
-          <div className="flex shrink-0 items-center justify-between border-b border-[#eceef2] px-4 py-3"><div><h2 className="text-sm font-semibold">Test your agent</h2><p className="mt-0.5 text-[10px] text-[#8992a2]">{previewModel || "Choose a model to start"}{previewOutput === "Json" ? " · JSON output" : ""}</p></div><span className={`size-2 rounded-full ${previewModel ? "bg-emerald-500" : "bg-amber-400"}`} /></div>
-
-          <div ref={messagesRef} className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
-
-            {messages.length === 0 ? <div className="m-auto max-w-xs text-center text-xs leading-5 text-[#8992a2]">Send a message to test the saved agent instructions and model.</div> : messages.map((message, index) => <div key={`${index}-${message.role}`} className={`shrink-0 max-w-[96%] rounded-xl px-4 py-3 text-[13px] leading-6 sm:max-w-[92%] ${message.role === "user" ? "self-end whitespace-pre-wrap bg-[#6255e8] text-white" : "self-start bg-[#f1f2f6] text-[#30394a]"}`}>{message.content ? message.role === "assistant" ? <div className="space-y-2 [&_a]:font-medium [&_a]:text-[#5749cc] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#c7c2fb] [&_blockquote]:pl-3 [&_blockquote]:text-[#657084] [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:leading-6 [&_h1:first-child]:mt-0 [&_h2]:mt-4 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:leading-6 [&_h2:first-child]:mt-0 [&_h3]:mt-3 [&_h3]:text-sm [&_h3]:font-semibold [&_h3:first-child]:mt-0 [&_li]:pl-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p+p]:mt-3 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-[#202631] [&_pre]:p-3 [&_pre]:text-[11px] [&_pre]:leading-5 [&_pre]:text-white [&_strong]:font-semibold [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5"><ReactMarkdown remarkPlugins={[remarkGfm]} components={{ p: ({ children }) => <p>{children}</p>, code: ({ children, className }) => <code className={`${className ?? ""} rounded bg-white/70 px-1 py-0.5 font-mono text-[11px] text-[#5146b8]`}>{children}</code>, a: ({ children, href }) => <a href={href} target={href?.startsWith("http") ? "_blank" : undefined} rel={href?.startsWith("http") ? "noreferrer" : undefined}>{children}</a> }}>{message.content}</ReactMarkdown>{message.charts?.map(chart => <AgentStudioChart key={chart.id} chart={chart} />)}</div> : message.content : sending && index === messages.length - 1 ? <LoaderCircle className="size-4 animate-spin" /> : null}</div>)}
-
-          {trace.length > 0 && <details className="mb-3 shrink-0 rounded-xl border border-purple-100 p-3 text-[11px]"><summary className="cursor-pointer font-medium text-[#6550ed]">Execution · {trace.length} steps</summary><div className="mt-3 space-y-2">{trace.map((step,index) => <div key={index} className="flex flex-wrap justify-between gap-2"><span>{step.name}</span><span className={step.status === "error" ? "text-rose-600" : "text-slate-500"}>{step.status.replaceAll("_"," ")} · {step.durationMs} ms</span>{step.detail && <p className="w-full text-rose-600">{step.detail}</p>}</div>)}</div></details>}
-
-          {approvals.map(approval => <div key={approval.token} className="mb-3 shrink-0 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"><strong>Review {approval.name}</strong><p className="my-2 break-all text-slate-600">{approval.method} {approval.url}</p><pre className="max-h-40 overflow-auto rounded-lg bg-white p-3 text-[10px]">{JSON.stringify(approval.body,null,2)}</pre><div className="mt-3 flex gap-2"><button disabled={sending} onClick={() => void confirmTool(approval)} className="rounded-lg bg-[#6550ed] px-3 py-2 text-white">{approval.kind === "flow" ? "Approve" : "Confirm action"}</button><button disabled={sending} onClick={() => approval.kind === "flow" ? void confirmTool(approval,"reject") : setApprovals(current => current.filter(item => item.token !== approval.token))} className="rounded-lg border bg-white px-3 py-2">{approval.kind === "flow" ? "Reject" : "Dismiss"}</button></div></div>)}
-
-          {chatError && <p role="status" className="mx-4 mb-2 text-[10px] text-rose-700">{chatError}</p>}
-
-          </div>
-
-          <form onSubmit={(event) => void sendMessage(event)} className="flex shrink-0 items-end gap-2 border-t border-[#eceef2] p-3 pr-16"><textarea style={{ fieldSizing: "fixed", height: 64, minHeight: 48, maxHeight: 96, resize: "none", padding: "8px 12px" }} value={input} onChange={(event) => setInput(event.currentTarget.value)} onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} disabled={sending} rows={2} maxLength={12000} placeholder="Message your agent…" className="min-h-10 flex-1 resize-none rounded-lg border border-[#dfe2e9] px-3 py-2 text-xs outline-none focus:border-[#aaa3f0] disabled:bg-[#f8f9fb]" /><button type="submit" disabled={!input.trim() || sending} aria-label="Send message" className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#171923] text-white disabled:opacity-45"><Send className="size-4" /></button></form>
-
-        </section>
-
-      </main>
-
-    </div>
-
-  </WorkflowContext.Provider>;
-
+    const noop = useCallback(() => {}, []);
+
+    if (loading)
+        return (
+            <div className="flex h-dvh items-center justify-center text-sm text-[#7c8595]">
+                <LoaderCircle className="mr-2 size-4 animate-spin" />
+                Loading saved agent preview…
+            </div>
+        );
+
+    if (loadError || !agent)
+        return (
+            <div className="flex h-dvh items-center justify-center p-5">
+                <div className="max-w-md rounded-2xl border border-[#e7e9ef] bg-white p-7 text-center">
+                    <p role="alert" className="text-sm text-rose-700">
+                        {loadError || "Agent not found."}
+                    </p>
+                    <button
+                        type="button"
+                        onClick={() => router.push(`/agent-builder/${encodeURIComponent(agentId)}`)}
+                        className="mt-4 rounded-lg bg-[#171923] px-4 py-2 text-xs font-semibold text-white"
+                    >
+                        Back to builder
+                    </button>
+                </div>
+            </div>
+        );
+
+    return (
+        <WorkflowContext.Provider value={{ addNode: noop, openToolLibrary: noop }}>
+            <div className="flex h-dvh min-h-[520px] flex-col overflow-hidden bg-[#f7f8fc] text-[#172033]">
+                <header className="flex h-16 shrink-0 items-center justify-between border-b border-[#e7e9ed] bg-white px-4 sm:px-6">
+                    <div className="flex min-w-0 items-center gap-3">
+                        <button
+                            type="button"
+                            aria-label="Back to builder"
+                            onClick={() =>
+                                router.push(`/agent-builder/${encodeURIComponent(agentId)}`)
+                            }
+                            className="flex size-9 items-center justify-center rounded-lg text-[#475467] hover:bg-[#f3f4f7]"
+                        >
+                            <ArrowLeft className="size-5" />
+                        </button>
+                        <div className="min-w-0">
+                            <h1 className="truncate text-[15px] font-semibold sm:text-[17px]">
+                                {agent.name}
+                            </h1>
+                            <p className="text-[10px] text-[#8992a2]">Agent preview</p>
+                        </div>
+                    </div>
+                </header>
+
+                <main className="grid min-h-0 flex-1 grid-cols-1 grid-rows-[minmax(0,2fr)_minmax(0,3fr)] gap-3 p-3 lg:grid-rows-1 lg:grid-cols-[minmax(0,3fr)_minmax(320px,1fr)] lg:gap-4 lg:p-5">
+                    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-[#e4e7ee] bg-white p-4">
+                        <div className="mb-3 flex shrink-0 items-center gap-2">
+                            <Eye className="size-4 text-[#6255e8]" />
+                            <h2 className="text-sm font-semibold">Preview</h2>
+                            <span className="ml-auto text-[10px] text-[#8992a2]">
+                                Saved workflow · {graph.nodes.length} nodes
+                            </span>
+                        </div>
+
+                        <div
+                            className={`min-h-0 flex-1 overflow-hidden rounded-xl bg-[#f7f8fc] ${actual ? `actual-agent-canvas ${originalOutfit.className}` : ""}`}
+                        >
+                            <ReactFlow<WorkflowNode, WorkflowEdge>
+                                nodes={graph.nodes}
+                                edges={graph.edges}
+                                nodeTypes={renderedNodeTypes}
+                                nodesDraggable={false}
+                                nodesConnectable={false}
+                                elementsSelectable={false}
+                                zoomOnDoubleClick={false}
+                                fitView
+                                fitViewOptions={{ padding: 0.22 }}
+                                minZoom={0.12}
+                                maxZoom={1.6}
+                                proOptions={{ hideAttribution: false }}
+                            >
+                                <Background
+                                    variant={BackgroundVariant.Dots}
+                                    gap={18}
+                                    size={1.6}
+                                    color="#b9c1cf"
+                                />
+
+                                <Controls position="bottom-left" showInteractive={false} />
+                            </ReactFlow>
+                        </div>
+
+                        <p className="mt-3 text-[10px] leading-5 text-[#858e9d]">
+                            This preview displays your saved workflow. Chat uses the connected
+                            model, specialist agents, knowledge and tools. Connections are selected
+                            when relevant; disconnected items do not run.
+                        </p>
+                    </section>
+
+                    <section className="flex min-h-0 min-w-0 flex-col overflow-hidden rounded-2xl border border-[#e4e7ee] bg-white">
+                        <div className="flex shrink-0 items-center justify-between border-b border-[#eceef2] px-4 py-3">
+                            <div>
+                                <h2 className="text-sm font-semibold">Test your agent</h2>
+                                <p className="mt-0.5 text-[10px] text-[#8992a2]">
+                                    {previewModel || "Choose a model to start"}
+                                    {previewOutput === "Json" ? " · JSON output" : ""}
+                                </p>
+                            </div>
+                            <span
+                                className={`size-2 rounded-full ${previewModel ? "bg-emerald-500" : "bg-amber-400"}`}
+                            />
+                        </div>
+
+                        <div
+                            ref={messagesRef}
+                            className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4"
+                        >
+                            {messages.length === 0 ? (
+                                <div className="m-auto max-w-xs text-center text-xs leading-5 text-[#8992a2]">
+                                    Send a message to test the saved agent instructions and model.
+                                </div>
+                            ) : (
+                                messages.map((message, index) => (
+                                    <div
+                                        key={`${index}-${message.role}`}
+                                        className={`shrink-0 max-w-[96%] rounded-xl px-4 py-3 text-[13px] leading-6 sm:max-w-[92%] ${message.role === "user" ? "self-end whitespace-pre-wrap bg-[#6255e8] text-white" : "self-start bg-[#f1f2f6] text-[#30394a]"}`}
+                                    >
+                                        {message.content ? (
+                                            message.role === "assistant" ? (
+                                                <div className="space-y-2 [&_a]:font-medium [&_a]:text-[#5749cc] [&_a]:underline [&_blockquote]:border-l-2 [&_blockquote]:border-[#c7c2fb] [&_blockquote]:pl-3 [&_blockquote]:text-[#657084] [&_h1]:mt-4 [&_h1]:text-base [&_h1]:font-semibold [&_h1]:leading-6 [&_h1:first-child]:mt-0 [&_h2]:mt-4 [&_h2]:text-[15px] [&_h2]:font-semibold [&_h2]:leading-6 [&_h2:first-child]:mt-0 [&_h3]:mt-3 [&_h3]:text-sm [&_h3]:font-semibold [&_h3:first-child]:mt-0 [&_li]:pl-1 [&_ol]:my-2 [&_ol]:list-decimal [&_ol]:space-y-1 [&_ol]:pl-5 [&_p+p]:mt-3 [&_pre]:my-3 [&_pre]:overflow-x-auto [&_pre]:rounded-lg [&_pre]:bg-[#202631] [&_pre]:p-3 [&_pre]:text-[11px] [&_pre]:leading-5 [&_pre]:text-white [&_strong]:font-semibold [&_ul]:my-2 [&_ul]:list-disc [&_ul]:space-y-1 [&_ul]:pl-5">
+                                                    <ReactMarkdown
+                                                        remarkPlugins={[remarkGfm]}
+                                                        components={{
+                                                            p: ({ children }) => <p>{children}</p>,
+                                                            code: ({ children, className }) => (
+                                                                <code
+                                                                    className={`${className ?? ""} rounded bg-white/70 px-1 py-0.5 font-mono text-[11px] text-[#5146b8]`}
+                                                                >
+                                                                    {children}
+                                                                </code>
+                                                            ),
+                                                            a: ({ children, href }) => (
+                                                                <a
+                                                                    href={href}
+                                                                    target={
+                                                                        href?.startsWith("http")
+                                                                            ? "_blank"
+                                                                            : undefined
+                                                                    }
+                                                                    rel={
+                                                                        href?.startsWith("http")
+                                                                            ? "noreferrer"
+                                                                            : undefined
+                                                                    }
+                                                                >
+                                                                    {children}
+                                                                </a>
+                                                            ),
+                                                        }}
+                                                    >
+                                                        {message.content}
+                                                    </ReactMarkdown>
+                                                    {message.charts?.map((chart) => (
+                                                        <AgentStudioChart
+                                                            key={chart.id}
+                                                            chart={chart}
+                                                        />
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                message.content
+                                            )
+                                        ) : sending && index === messages.length - 1 ? (
+                                            <LoaderCircle className="size-4 animate-spin" />
+                                        ) : null}
+                                    </div>
+                                ))
+                            )}
+
+                            {trace.length > 0 && (
+                                <details className="mb-3 shrink-0 rounded-xl border border-purple-100 p-3 text-[11px]">
+                                    <summary className="cursor-pointer font-medium text-[#6550ed]">
+                                        Execution · {trace.length} steps
+                                    </summary>
+                                    <div className="mt-3 space-y-2">
+                                        {trace.map((step, index) => (
+                                            <div
+                                                key={index}
+                                                className="flex flex-wrap justify-between gap-2"
+                                            >
+                                                <span>{step.name}</span>
+                                                <span
+                                                    className={
+                                                        step.status === "error"
+                                                            ? "text-rose-600"
+                                                            : "text-slate-500"
+                                                    }
+                                                >
+                                                    {step.status.replaceAll("_", " ")} ·{" "}
+                                                    {step.durationMs} ms
+                                                </span>
+                                                {step.detail && (
+                                                    <p className="w-full text-rose-600">
+                                                        {step.detail}
+                                                    </p>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </details>
+                            )}
+
+                            {approvals.map((approval) => (
+                                <div
+                                    key={approval.token}
+                                    className="mb-3 shrink-0 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs"
+                                >
+                                    <strong>Review {approval.name}</strong>
+                                    <p className="my-2 break-all text-slate-600">
+                                        {approval.method} {approval.url}
+                                    </p>
+                                    <pre className="max-h-40 overflow-auto rounded-lg bg-white p-3 text-[10px]">
+                                        {JSON.stringify(approval.body, null, 2)}
+                                    </pre>
+                                    <div className="mt-3 flex gap-2">
+                                        <button
+                                            disabled={sending}
+                                            onClick={() => void confirmTool(approval)}
+                                            className="rounded-lg bg-[#6550ed] px-3 py-2 text-white"
+                                        >
+                                            {approval.kind === "flow"
+                                                ? "Approve"
+                                                : "Confirm action"}
+                                        </button>
+                                        <button
+                                            disabled={sending}
+                                            onClick={() =>
+                                                approval.kind === "flow"
+                                                    ? void confirmTool(approval, "reject")
+                                                    : setApprovals((current) =>
+                                                          current.filter(
+                                                              (item) =>
+                                                                  item.token !== approval.token,
+                                                          ),
+                                                      )
+                                            }
+                                            className="rounded-lg border bg-white px-3 py-2"
+                                        >
+                                            {approval.kind === "flow" ? "Reject" : "Dismiss"}
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+
+                            {chatError && (
+                                <p role="status" className="mx-4 mb-2 text-[10px] text-rose-700">
+                                    {chatError}
+                                </p>
+                            )}
+                        </div>
+
+                        <form
+                            onSubmit={(event) => void sendMessage(event)}
+                            className="flex shrink-0 items-end gap-2 border-t border-[#eceef2] p-3 pr-16"
+                        >
+                            <textarea
+                                style={{
+                                    fieldSizing: "fixed",
+                                    height: 64,
+                                    minHeight: 48,
+                                    maxHeight: 96,
+                                    resize: "none",
+                                    padding: "8px 12px",
+                                }}
+                                value={input}
+                                onChange={(event) => setInput(event.currentTarget.value)}
+                                onKeyDown={(event) => {
+                                    if (event.key === "Enter" && !event.shiftKey) {
+                                        event.preventDefault();
+                                        event.currentTarget.form?.requestSubmit();
+                                    }
+                                }}
+                                disabled={sending}
+                                rows={2}
+                                maxLength={12000}
+                                placeholder="Message your agent…"
+                                className="min-h-10 flex-1 resize-none rounded-lg border border-[#dfe2e9] px-3 py-2 text-xs outline-none focus:border-[#aaa3f0] disabled:bg-[#f8f9fb]"
+                            />
+                            <button
+                                type="submit"
+                                disabled={!input.trim() || sending}
+                                aria-label="Send message"
+                                className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[#171923] text-white disabled:opacity-45"
+                            >
+                                <Send className="size-4" />
+                            </button>
+                        </form>
+                    </section>
+                </main>
+            </div>
+        </WorkflowContext.Provider>
+    );
 }
-
-
 
 export default function AgentPreviewPage() {
+    const params = useParams<{ agentId: string }>();
 
-  const params = useParams<{ agentId: string }>();
+    const agentId = Array.isArray(params.agentId) ? params.agentId[0] : params.agentId;
 
-  const agentId = Array.isArray(params.agentId) ? params.agentId[0] : params.agentId;
-
-  return <ReactFlowProvider><PreviewWorkspace agentId={decodeURIComponent(agentId)} /></ReactFlowProvider>;
-
+    return (
+        <ReactFlowProvider>
+            <PreviewWorkspace agentId={decodeURIComponent(agentId)} />
+        </ReactFlowProvider>
+    );
 }
-

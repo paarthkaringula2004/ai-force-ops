@@ -3,23 +3,209 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Bot, Network, X } from "lucide-react";
 import ModelIdSelect from "./model-id-select";
 
-export type NewAgentInput = { name: string; purpose: string; instructions: string; modelId: string; workflowMode: "actual" | "super" };
-export default function CreateAgentDialog({onClose,onCreate,connect=false}:{onClose:()=>void;onCreate:(input:NewAgentInput)=>Promise<void>;connect?:boolean}) {
-  const dialog=useRef<HTMLDialogElement>(null);
-  const [form,setForm]=useState<NewAgentInput>({name:"",purpose:"",instructions:"",modelId:"gpt-4.1-mini",workflowMode:"actual"});
-  const [busy,setBusy]=useState(false),[error,setError]=useState("");
-  useEffect(()=>{dialog.current?.showModal();},[]);
-  const field="mt-2 w-full rounded-xl border border-[#e6e4f0] bg-[#fbfaff] px-4 py-3 text-sm text-slate-800 outline-none focus:border-[#6550ed] focus:ring-2 focus:ring-[#6550ed]/10";
-  async function submit(e:FormEvent){e.preventDefault();if(!form.name.trim()||(form.workflowMode === "super" && !form.instructions.trim())){setError("Add an agent name and instructions before creating.");return;}setBusy(true);setError("");try{await onCreate({...form,name:form.name.trim(),instructions:form.instructions.trim()});}catch(e){setError(e instanceof Error?e.message:"Could not create the agent.");}finally{setBusy(false);}}
-  return <dialog ref={dialog} onCancel={e=>{e.preventDefault();if(!busy)onClose();}} aria-labelledby="new-agent-title" className="m-auto max-h-[90dvh] w-[640px] max-w-[calc(100%-32px)] overflow-y-auto rounded-[26px] border border-[#e9e7f2] bg-white p-6 text-slate-800 shadow-2xl backdrop:bg-slate-900/40 backdrop:backdrop-blur-sm sm:p-8">
-    <div className="flex items-start justify-between"><div><p className="text-[10px] font-bold uppercase tracking-widest text-[#6550ed]">Create your agent</p><h2 id="new-agent-title" className="mt-2 text-2xl font-semibold">What would you like to build?</h2></div><button disabled={busy} type="button" aria-label="Close create agent" onClick={onClose} className="rounded-full border border-slate-100 p-2 text-slate-400 hover:bg-purple-50"><X className="size-4"/></button></div>
-    <form onSubmit={submit} className="mt-6 space-y-4"><fieldset disabled={busy}><legend className="mb-2 text-xs font-semibold">Agent type</legend><div className="grid grid-cols-1 gap-3 sm:grid-cols-2">{([['actual','Actual Agent','Start with a blank canvas. Add Agent, End, If/Else, While, User Approval and API steps.',Bot],['super','Super Agent','Coordinate saved specialists with model, memory and Tool Library connections.',Network]] as const).map(([value,label,description,Icon])=><label key={value} className={`cursor-pointer rounded-2xl border p-4 ${form.workflowMode===value?'border-[#6550ed] bg-[#f3f0ff]':'border-[#e6e4f0] bg-white'}`}><div className="flex items-center gap-2"><Icon className="size-4 text-[#6550ed]"/><span className="flex-1 text-sm font-semibold">{label}</span><input type="radio" name="agentType" value={value} checked={form.workflowMode===value} onChange={()=>setForm({...form,workflowMode:value})} className="accent-[#6550ed]"/></div><p className="mt-2 text-xs leading-5 text-slate-500">{description}</p></label>)}</div></fieldset>
-    <label className="block text-xs font-semibold">Agent name<input required autoFocus disabled={busy} maxLength={64} value={form.name} onChange={e=>setForm({...form,name:e.target.value})} placeholder="e.g. Incident Triage Agent" className={field}/></label>
-    {form.workflowMode==='super' && <><label className="block text-xs font-semibold">Purpose<input disabled={busy} maxLength={2000} value={form.purpose} onChange={e=>setForm({...form,purpose:e.target.value})} placeholder="What should this agent help with?" className={field}/></label>
-    <label className="block text-xs font-semibold">Instructions<textarea required disabled={busy} rows={3} maxLength={12000} value={form.instructions} onChange={e=>setForm({...form,instructions:e.target.value})} placeholder="Describe the task, expected answer and when to use connected tools." className={field}/></label>
-    <ModelIdSelect value={form.modelId} onChange={modelId=>setForm({...form,modelId})}/></>}
-    <p className="text-xs leading-5 text-slate-500">{connect?"Your new agent will be connected to this workflow. Open it from Agents to edit its steps.":"Next, your builder opens to configure steps and connections."} {form.workflowMode==='actual'?"Add a custom endpoint and encrypted API key on an API step.":"Connect specialists through Agents and custom APIs through Tool Library."} API origins must be approved on the server; write requests require confirmation.</p>
-    {error&&<p role="alert" className="text-sm text-rose-600">{error}</p>}
-    <div className="flex justify-end gap-3"><button type="button" disabled={busy} onClick={onClose} className="rounded-xl px-4 py-3 text-sm text-slate-500">Cancel</button><button disabled={busy} className="rounded-xl bg-[#6550ed] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50">{busy?'Creating…':connect?'Create & connect':'Create & open builder'}</button></div></form>
-  </dialog>;
+export type NewAgentInput = {
+    name: string;
+    purpose: string;
+    instructions: string;
+    modelId: string;
+    workflowMode: "actual" | "super";
+};
+export default function CreateAgentDialog({
+    onClose,
+    onCreate,
+    connect = false,
+}: {
+    onClose: () => void;
+    onCreate: (input: NewAgentInput) => Promise<void>;
+    connect?: boolean;
+}) {
+    const dialog = useRef<HTMLDialogElement>(null);
+    const [form, setForm] = useState<NewAgentInput>({
+        name: "",
+        purpose: "",
+        instructions: "",
+        modelId: "gpt-4.1-mini",
+        workflowMode: "actual",
+    });
+    const [busy, setBusy] = useState(false),
+        [error, setError] = useState("");
+    useEffect(() => {
+        dialog.current?.showModal();
+    }, []);
+    const field =
+        "mt-2 w-full rounded-xl border border-[#e6e4f0] bg-[#fbfaff] px-4 py-3 text-sm text-slate-800 outline-none focus:border-[#6550ed] focus:ring-2 focus:ring-[#6550ed]/10";
+    async function submit(e: FormEvent) {
+        e.preventDefault();
+        if (!form.name.trim() || (form.workflowMode === "super" && !form.instructions.trim())) {
+            setError("Add an agent name and instructions before creating.");
+            return;
+        }
+        setBusy(true);
+        setError("");
+        try {
+            await onCreate({
+                ...form,
+                name: form.name.trim(),
+                instructions: form.instructions.trim(),
+            });
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "Could not create the agent.");
+        } finally {
+            setBusy(false);
+        }
+    }
+    return (
+        <dialog
+            ref={dialog}
+            onCancel={(e) => {
+                e.preventDefault();
+                if (!busy) onClose();
+            }}
+            aria-labelledby="new-agent-title"
+            className="m-auto max-h-[90dvh] w-[640px] max-w-[calc(100%-32px)] overflow-y-auto rounded-[26px] border border-[#e9e7f2] bg-white p-6 text-slate-800 shadow-2xl backdrop:bg-slate-900/40 backdrop:backdrop-blur-sm sm:p-8"
+        >
+            <div className="flex items-start justify-between">
+                <div>
+                    <p className="text-[10px] font-bold uppercase tracking-widest text-[#6550ed]">
+                        Create your agent
+                    </p>
+                    <h2 id="new-agent-title" className="mt-2 text-2xl font-semibold">
+                        What would you like to build?
+                    </h2>
+                </div>
+                <button
+                    disabled={busy}
+                    type="button"
+                    aria-label="Close create agent"
+                    onClick={onClose}
+                    className="rounded-full border border-slate-100 p-2 text-slate-400 hover:bg-purple-50"
+                >
+                    <X className="size-4" />
+                </button>
+            </div>
+            <form onSubmit={submit} className="mt-6 space-y-4">
+                <fieldset disabled={busy}>
+                    <legend className="mb-2 text-xs font-semibold">Agent type</legend>
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                        {(
+                            [
+                                [
+                                    "actual",
+                                    "Actual Agent",
+                                    "Start with a blank canvas. Add Agent, End, If/Else, While, User Approval and API steps.",
+                                    Bot,
+                                ],
+                                [
+                                    "super",
+                                    "Super Agent",
+                                    "Coordinate saved specialists with model, memory and Tool Library connections.",
+                                    Network,
+                                ],
+                            ] as const
+                        ).map(([value, label, description, Icon]) => (
+                            <label
+                                key={value}
+                                className={`cursor-pointer rounded-2xl border p-4 ${form.workflowMode === value ? "border-[#6550ed] bg-[#f3f0ff]" : "border-[#e6e4f0] bg-white"}`}
+                            >
+                                <div className="flex items-center gap-2">
+                                    <Icon className="size-4 text-[#6550ed]" />
+                                    <span className="flex-1 text-sm font-semibold">{label}</span>
+                                    <input
+                                        type="radio"
+                                        name="agentType"
+                                        value={value}
+                                        checked={form.workflowMode === value}
+                                        onChange={() => setForm({ ...form, workflowMode: value })}
+                                        className="accent-[#6550ed]"
+                                    />
+                                </div>
+                                <p className="mt-2 text-xs leading-5 text-slate-500">
+                                    {description}
+                                </p>
+                            </label>
+                        ))}
+                    </div>
+                </fieldset>
+                <label className="block text-xs font-semibold">
+                    Agent name
+                    <input
+                        required
+                        autoFocus
+                        disabled={busy}
+                        maxLength={64}
+                        value={form.name}
+                        onChange={(e) => setForm({ ...form, name: e.target.value })}
+                        placeholder="e.g. Incident Triage Agent"
+                        className={field}
+                    />
+                </label>
+                {form.workflowMode === "super" && (
+                    <>
+                        <label className="block text-xs font-semibold">
+                            Purpose
+                            <input
+                                disabled={busy}
+                                maxLength={2000}
+                                value={form.purpose}
+                                onChange={(e) => setForm({ ...form, purpose: e.target.value })}
+                                placeholder="What should this agent help with?"
+                                className={field}
+                            />
+                        </label>
+                        <label className="block text-xs font-semibold">
+                            Instructions
+                            <textarea
+                                required
+                                disabled={busy}
+                                rows={3}
+                                maxLength={12000}
+                                value={form.instructions}
+                                onChange={(e) => setForm({ ...form, instructions: e.target.value })}
+                                placeholder="Describe the task, expected answer and when to use connected tools."
+                                className={field}
+                            />
+                        </label>
+                        <ModelIdSelect
+                            value={form.modelId}
+                            onChange={(modelId) => setForm({ ...form, modelId })}
+                        />
+                    </>
+                )}
+                <p className="text-xs leading-5 text-slate-500">
+                    {connect
+                        ? "Your new agent will be connected to this workflow. Open it from Agents to edit its steps."
+                        : "Next, your builder opens to configure steps and connections."}{" "}
+                    {form.workflowMode === "actual"
+                        ? "Add a custom endpoint and encrypted API key on an API step."
+                        : "Connect specialists through Agents and custom APIs through Tool Library."}{" "}
+                    API origins must be approved on the server; write requests require confirmation.
+                </p>
+                {error && (
+                    <p role="alert" className="text-sm text-rose-600">
+                        {error}
+                    </p>
+                )}
+                <div className="flex justify-end gap-3">
+                    <button
+                        type="button"
+                        disabled={busy}
+                        onClick={onClose}
+                        className="rounded-xl px-4 py-3 text-sm text-slate-500"
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        disabled={busy}
+                        className="rounded-xl bg-[#6550ed] px-5 py-3 text-sm font-semibold text-white disabled:opacity-50"
+                    >
+                        {busy
+                            ? "Creating…"
+                            : connect
+                              ? "Create & connect"
+                              : "Create & open builder"}
+                    </button>
+                </div>
+            </form>
+        </dialog>
+    );
 }

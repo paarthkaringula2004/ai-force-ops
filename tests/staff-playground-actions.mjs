@@ -1,31 +1,241 @@
-import 'dotenv/config';import assert from 'node:assert/strict';import {randomUUID} from 'node:crypto';import pg from 'pg';import {load} from './helpers/load-ts.mjs';
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL}),c=await pool.connect();let actor;
-const client={query:(sql,args)=>/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)?Promise.resolve({rows:[]}):c.query(sql,args),release(){}};const db={query:(sql,args)=>c.query(sql,args),connect:async()=>client};
-const deps={'./db':{db},'@/lib/db':{db},'./mail-events':{queueLeaveEvent:async()=>{}},'@/lib/request-session':{getRequestSession:async()=>actor?{user:{id:actor}}:null}};
-const {employeeReply:reply,employeeSnapshot,employeeServicePlans:plans}=load('lib/employee-playground.ts',deps),decision=load('lib/workspace-request-chat.ts',deps),requests=load('app/api/workspace/requests/route.ts',deps);
-const fields={onboarding:['Engineering','2026-11-02, Hyderabad','Laptop'],equipment:['New allocation','32GB RAM','No accessories needed','Development work'],room:['Hyderabad','2026-11-12, 2pm-3pm IST','4','Sprint planning','Small meeting room'],access:['Engineering application','Project delivery for six months'],support:['Windows','Settings shows incorrect memory'],resignation:['2026-11-30','Personal reasons','Hand over documentation'],referral:['ENG-42','Test candidate, five years experience','Yes, candidate consent obtained'],expense:['Business travel','INR 2500 on 2026-10-06','Client meeting; receipts available'],travel:['Bengaluru','2026-11-12 to 2026-11-14','Client workshop INR 10000'],attendance:['2026-10-06','9am-6pm IST','Clock entry missing'],payroll:['September 2026','Allowance missing'],benefits:['Transport allowance','Explain enrollment'],transfer:['Platform Engineering','2026-12-01','Support platform project'],training:['Cloud certification','Internal / no cost, November 2026','Platform development'],document:['Employment verification','Visa application by 2026-11-20'],workplace:['Office lighting','Facilities review'],flexible:['Flexible hours','November 2026, 10am-7pm IST','Team coverage agreed'],other:['Parking allocation','Space for November 2026']};
-async function member(id){return(await c.query('SELECT * FROM workspace_members WHERE user_id=$1',[id])).rows[0];}
-async function fixture(role){const id=randomUUID();await c.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',[id,'Staff fixture '+role,id+'@example.invalid']);await c.query('UPDATE workspace_members SET role=$2 WHERE user_id=$1',[id,role]);return id;}
-const request=(path,body)=>new Request('http://localhost:3000'+path,{method:body?'PATCH':'GET',headers:{Origin:'http://localhost:3000','Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});
-try{
- await c.query('BEGIN');const employee=await fixture('employee'),manager=await fixture('manager'),other=await fixture('employee'),user=await fixture('user');await c.query('UPDATE workspace_members SET manager_id=$2 WHERE user_id=$1',[employee,manager]);
- for(const id of [employee,manager]){
-  const access=await member(id);for(const [kind,values]of Object.entries(fields)){
-   assert.equal(plans[kind].length,values.length,kind);const intent={mode:'collect',kind,fields:plans[kind].map((step,i)=>({key:step.key,value:values[i]})),reply:''};
-   const preview=await reply(id,'Staff fixture','Prepare my '+kind+' request',access,undefined,{intent,expectedDraftId:null,expectedVersion:null});assert.match(preview.reply,/Review your/);assert.ok(preview.choices.includes('Submit request'),kind);
-   const before=(await c.query('SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1',[id])).rows[0].n;
-   const submitted=await reply(id,'Staff fixture','Submit request',access);assert.match(submitted.reply,/request submitted/);assert.equal((await c.query('SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1',[id])).rows[0].n,before+1,kind);
-   await reply(id,'Staff fixture','Submit request',access);assert.equal((await c.query('SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1',[id])).rows[0].n,before+1,'repeat '+kind);
-  }
-  await reply(id,'Staff fixture','Apply annual leave for 12 November 2026 because personal commitments',access);const leave=await reply(id,'Staff fixture','Confirm leave',access);assert.match(leave.reply,/REQ-/);assert.equal((await c.query("SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1 AND kind='leave'",[id])).rows[0].n,1);
-  assert.equal((await employeeSnapshot(id)).requests.length,19);console.log('PASS '+access.role+': all 19 request kinds persisted after explicit confirmation; replay creates no duplicate.');
- }
- const access=await member(employee);await reply(employee,'Staff fixture','Book a meeting room',access);for(const text of ['Hyderabad','2026-11-16 14:00-15:00 IST','4','Planning','Small meeting room'])await reply(employee,'Staff fixture',text,access);let snapshot=await employeeSnapshot(employee);assert.equal(snapshot.draft.completed,snapshot.draft.total);assert.equal(snapshot.draft.fields.requirements,'Small meeting room');
- await reply(employee,'Staff fixture','Edit Attendees',access);assert.match((await reply(employee,'Staff fixture','zero',access)).reply,/attendee count/);await reply(employee,'Staff fixture','3',access);await reply(employee,'Staff fixture','Cancel request',access);assert.equal((await employeeSnapshot(employee)).draft,null);
- await reply(employee,'Staff fixture','Request a laptop',access);await reply(employee,'Staff fixture','New allocation',access);await reply(employee,'Staff fixture','What does that mean?',access);assert.equal((await employeeSnapshot(employee)).draft.fields.requirements,undefined);await reply(employee,'Staff fixture','32GB RAM',access);await reply(employee,'Staff fixture','Mouse and headset',access);await reply(employee,'Staff fixture','Development work',access);assert.equal((await employeeSnapshot(employee)).draft.completed,4);await reply(employee,'Staff fixture','Cancel request',access);
- const own=(await c.query("SELECT * FROM employee_service_requests WHERE user_id=$1 AND kind='equipment'",[employee])).rows[0],foreign=(await c.query("INSERT INTO employee_service_requests(id,user_id,request_number,kind,details) VALUES($1,$2,$3,'support','{}') RETURNING *",[randomUUID(),other,'REQ-'+randomUUID().replaceAll('-','').slice(0,12).toUpperCase()])).rows[0];
- actor=manager;const team=await(await requests.GET(request('/api/workspace/requests?scope=team'))).json();assert.ok(team.requests.some(r=>r.id===own.id));assert.ok(!team.requests.some(r=>r.id===foreign.id));assert.ok(!team.requests.some(r=>r.user_id===manager));
- const pending=await decision.workspaceRequestChatReply(manager,'Approve '+own.request_number,await member(manager));assert.match(pending.reply,/Review/);assert.equal((await c.query('SELECT status FROM employee_service_requests WHERE id=$1',[own.id])).rows[0].status,'pending_approval');const approved=await decision.workspaceRequestChatReply(manager,pending.choices.find(c=>c.startsWith('Confirm ')),await member(manager));assert.match(approved.reply,/approved/i);
- const blocked=await decision.workspaceRequestChatReply(manager,'Approve '+foreign.request_number,await member(manager));assert.match(blocked.reply,/not found|not permitted|assigned/i);actor=employee;assert.equal((await requests.GET(request('/api/workspace/requests?scope=team'))).status,403);assert.match((await reply(other,'Other',own.request_number,await member(other))).reply,/couldn't find/);assert.equal(await reply(user,'User','Request a laptop',await member(user)),null);
- console.log('PASS room option progression, editing, invalid answers, question preservation, laptop progression, cancellation, owner isolation and Manager team-only preview/confirmation. All fixtures rolled back; no mail or external fulfilment.');
-}finally{await c.query('ROLLBACK');c.release();await pool.end();}
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import pg from "pg";
+import { load } from "./helpers/load-ts.mjs";
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+    c = await pool.connect();
+let actor;
+const client = {
+    query: (sql, args) =>
+        /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : c.query(sql, args),
+    release() {},
+};
+const db = { query: (sql, args) => c.query(sql, args), connect: async () => client };
+const deps = {
+    "./db": { db },
+    "@/lib/db": { db },
+    "./mail-events": { queueLeaveEvent: async () => {} },
+    "@/lib/request-session": {
+        getRequestSession: async () => (actor ? { user: { id: actor } } : null),
+    },
+};
+const {
+        employeeReply: reply,
+        employeeSnapshot,
+        employeeServicePlans: plans,
+    } = load("lib/employee-playground.ts", deps),
+    decision = load("lib/workspace-request-chat.ts", deps),
+    requests = load("app/api/workspace/requests/route.ts", deps);
+const fields = {
+    onboarding: ["Engineering", "2026-11-02, Hyderabad", "Laptop"],
+    equipment: ["New allocation", "32GB RAM", "No accessories needed", "Development work"],
+    room: ["Hyderabad", "2026-11-12, 2pm-3pm IST", "4", "Sprint planning", "Small meeting room"],
+    access: ["Engineering application", "Project delivery for six months"],
+    support: ["Windows", "Settings shows incorrect memory"],
+    resignation: ["2026-11-30", "Personal reasons", "Hand over documentation"],
+    referral: [
+        "ENG-42",
+        "Test candidate, five years experience",
+        "Yes, candidate consent obtained",
+    ],
+    expense: ["Business travel", "INR 2500 on 2026-10-06", "Client meeting; receipts available"],
+    travel: ["Bengaluru", "2026-11-12 to 2026-11-14", "Client workshop INR 10000"],
+    attendance: ["2026-10-06", "9am-6pm IST", "Clock entry missing"],
+    payroll: ["September 2026", "Allowance missing"],
+    benefits: ["Transport allowance", "Explain enrollment"],
+    transfer: ["Platform Engineering", "2026-12-01", "Support platform project"],
+    training: ["Cloud certification", "Internal / no cost, November 2026", "Platform development"],
+    document: ["Employment verification", "Visa application by 2026-11-20"],
+    workplace: ["Office lighting", "Facilities review"],
+    flexible: ["Flexible hours", "November 2026, 10am-7pm IST", "Team coverage agreed"],
+    other: ["Parking allocation", "Space for November 2026"],
+};
+async function member(id) {
+    return (await c.query("SELECT * FROM workspace_members WHERE user_id=$1", [id])).rows[0];
+}
+async function fixture(role) {
+    const id = randomUUID();
+    await c.query(
+        'INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',
+        [id, "Staff fixture " + role, id + "@example.invalid"],
+    );
+    await c.query("UPDATE workspace_members SET role=$2 WHERE user_id=$1", [id, role]);
+    return id;
+}
+const request = (path, body) =>
+    new Request("http://localhost:3000" + path, {
+        method: body ? "PATCH" : "GET",
+        headers: { Origin: "http://localhost:3000", "Content-Type": "application/json" },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+try {
+    await c.query("BEGIN");
+    const employee = await fixture("employee"),
+        manager = await fixture("manager"),
+        other = await fixture("employee"),
+        user = await fixture("user");
+    await c.query("UPDATE workspace_members SET manager_id=$2 WHERE user_id=$1", [
+        employee,
+        manager,
+    ]);
+    for (const id of [employee, manager]) {
+        const access = await member(id);
+        for (const [kind, values] of Object.entries(fields)) {
+            assert.equal(plans[kind].length, values.length, kind);
+            const intent = {
+                mode: "collect",
+                kind,
+                fields: plans[kind].map((step, i) => ({ key: step.key, value: values[i] })),
+                reply: "",
+            };
+            const preview = await reply(
+                id,
+                "Staff fixture",
+                "Prepare my " + kind + " request",
+                access,
+                undefined,
+                { intent, expectedDraftId: null, expectedVersion: null },
+            );
+            assert.match(preview.reply, /Review your/);
+            assert.ok(preview.choices.includes("Submit request"), kind);
+            const before = (
+                await c.query(
+                    "SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1",
+                    [id],
+                )
+            ).rows[0].n;
+            const submitted = await reply(id, "Staff fixture", "Submit request", access);
+            assert.match(submitted.reply, /request submitted/);
+            assert.equal(
+                (
+                    await c.query(
+                        "SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1",
+                        [id],
+                    )
+                ).rows[0].n,
+                before + 1,
+                kind,
+            );
+            await reply(id, "Staff fixture", "Submit request", access);
+            assert.equal(
+                (
+                    await c.query(
+                        "SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1",
+                        [id],
+                    )
+                ).rows[0].n,
+                before + 1,
+                "repeat " + kind,
+            );
+        }
+        await reply(
+            id,
+            "Staff fixture",
+            "Apply annual leave for 12 November 2026 because personal commitments",
+            access,
+        );
+        const leave = await reply(id, "Staff fixture", "Confirm leave", access);
+        assert.match(leave.reply, /REQ-/);
+        assert.equal(
+            (
+                await c.query(
+                    "SELECT count(*)::int AS n FROM employee_service_requests WHERE user_id=$1 AND kind='leave'",
+                    [id],
+                )
+            ).rows[0].n,
+            1,
+        );
+        assert.equal((await employeeSnapshot(id)).requests.length, 19);
+        console.log(
+            "PASS " +
+                access.role +
+                ": all 19 request kinds persisted after explicit confirmation; replay creates no duplicate.",
+        );
+    }
+    const access = await member(employee);
+    await reply(employee, "Staff fixture", "Book a meeting room", access);
+    for (const text of [
+        "Hyderabad",
+        "2026-11-16 14:00-15:00 IST",
+        "4",
+        "Planning",
+        "Small meeting room",
+    ])
+        await reply(employee, "Staff fixture", text, access);
+    let snapshot = await employeeSnapshot(employee);
+    assert.equal(snapshot.draft.completed, snapshot.draft.total);
+    assert.equal(snapshot.draft.fields.requirements, "Small meeting room");
+    await reply(employee, "Staff fixture", "Edit Attendees", access);
+    assert.match((await reply(employee, "Staff fixture", "zero", access)).reply, /attendee count/);
+    await reply(employee, "Staff fixture", "3", access);
+    await reply(employee, "Staff fixture", "Cancel request", access);
+    assert.equal((await employeeSnapshot(employee)).draft, null);
+    await reply(employee, "Staff fixture", "Request a laptop", access);
+    await reply(employee, "Staff fixture", "New allocation", access);
+    await reply(employee, "Staff fixture", "What does that mean?", access);
+    assert.equal((await employeeSnapshot(employee)).draft.fields.requirements, undefined);
+    await reply(employee, "Staff fixture", "32GB RAM", access);
+    await reply(employee, "Staff fixture", "Mouse and headset", access);
+    await reply(employee, "Staff fixture", "Development work", access);
+    assert.equal((await employeeSnapshot(employee)).draft.completed, 4);
+    await reply(employee, "Staff fixture", "Cancel request", access);
+    const own = (
+            await c.query(
+                "SELECT * FROM employee_service_requests WHERE user_id=$1 AND kind='equipment'",
+                [employee],
+            )
+        ).rows[0],
+        foreign = (
+            await c.query(
+                "INSERT INTO employee_service_requests(id,user_id,request_number,kind,details) VALUES($1,$2,$3,'support','{}') RETURNING *",
+                [
+                    randomUUID(),
+                    other,
+                    "REQ-" + randomUUID().replaceAll("-", "").slice(0, 12).toUpperCase(),
+                ],
+            )
+        ).rows[0];
+    actor = manager;
+    const team = await (await requests.GET(request("/api/workspace/requests?scope=team"))).json();
+    assert.ok(team.requests.some((r) => r.id === own.id));
+    assert.ok(!team.requests.some((r) => r.id === foreign.id));
+    assert.ok(!team.requests.some((r) => r.user_id === manager));
+    const pending = await decision.workspaceRequestChatReply(
+        manager,
+        "Approve " + own.request_number,
+        await member(manager),
+    );
+    assert.match(pending.reply, /Review/);
+    assert.equal(
+        (await c.query("SELECT status FROM employee_service_requests WHERE id=$1", [own.id]))
+            .rows[0].status,
+        "pending_approval",
+    );
+    const approved = await decision.workspaceRequestChatReply(
+        manager,
+        pending.choices.find((c) => c.startsWith("Confirm ")),
+        await member(manager),
+    );
+    assert.match(approved.reply, /approved/i);
+    const blocked = await decision.workspaceRequestChatReply(
+        manager,
+        "Approve " + foreign.request_number,
+        await member(manager),
+    );
+    assert.match(blocked.reply, /not found|not permitted|assigned/i);
+    actor = employee;
+    assert.equal((await requests.GET(request("/api/workspace/requests?scope=team"))).status, 403);
+    assert.match(
+        (await reply(other, "Other", own.request_number, await member(other))).reply,
+        /couldn't find/,
+    );
+    assert.equal(await reply(user, "User", "Request a laptop", await member(user)), null);
+    console.log(
+        "PASS room option progression, editing, invalid answers, question preservation, laptop progression, cancellation, owner isolation and Manager team-only preview/confirmation. All fixtures rolled back; no mail or external fulfilment.",
+    );
+} finally {
+    await c.query("ROLLBACK");
+    c.release();
+    await pool.end();
+}

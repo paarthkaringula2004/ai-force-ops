@@ -1,30 +1,55 @@
 CREATE TABLE platform_events (
- id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
- source text NOT NULL, action text NOT NULL, resource_id text NOT NULL DEFAULT '',
- status text NOT NULL DEFAULT 'success', summary text NOT NULL, href text NOT NULL DEFAULT '',
- created_at timestamptz NOT NULL DEFAULT now()
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id text NOT NULL REFERENCES "user" (id) ON DELETE CASCADE,
+    source text NOT NULL,
+    action text NOT NULL,
+    resource_id text NOT NULL DEFAULT '',
+    status text NOT NULL DEFAULT 'success',
+    summary text NOT NULL,
+    href text NOT NULL DEFAULT '',
+    created_at timestamptz NOT NULL DEFAULT now()
 );
-CREATE INDEX platform_events_owner_time ON platform_events(user_id,created_at DESC);
-CREATE TABLE platform_alerts (
- id uuid PRIMARY KEY DEFAULT gen_random_uuid(), user_id text NOT NULL REFERENCES "user"(id) ON DELETE CASCADE,
- source text NOT NULL, event_key text NOT NULL, severity text NOT NULL DEFAULT 'warning',
- summary text NOT NULL, detail text NOT NULL DEFAULT '', href text NOT NULL DEFAULT '',
- state text NOT NULL DEFAULT 'active' CHECK(state IN ('active','acknowledged','resolved')),
- created_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now(),
- UNIQUE(user_id,source,event_key)
-);
-CREATE INDEX platform_alerts_owner_state ON platform_alerts(user_id,state,updated_at DESC);
-CREATE TABLE platform_alert_deliveries (
- connection_id uuid NOT NULL REFERENCES eassist_connections(id) ON DELETE CASCADE,
- alert_id uuid NOT NULL REFERENCES platform_alerts(id) ON DELETE CASCADE,
- state text NOT NULL DEFAULT 'pending', attempts integer NOT NULL DEFAULT 0,
- last_error text NOT NULL DEFAULT '', checked_at timestamptz, next_attempt timestamptz NOT NULL DEFAULT now(),
- lease_until timestamptz, PRIMARY KEY(connection_id,alert_id)
-);
-CREATE TRIGGER platform_events_live AFTER INSERT OR UPDATE OR DELETE ON platform_events FOR EACH ROW EXECUTE FUNCTION eassist_changed();
-CREATE TRIGGER platform_alerts_live AFTER INSERT OR UPDATE OR DELETE ON platform_alerts FOR EACH ROW EXECUTE FUNCTION eassist_changed();
 
-CREATE FUNCTION platform_capture_change() RETURNS trigger LANGUAGE plpgsql AS $$
+CREATE INDEX platform_events_owner_time ON platform_events (user_id, created_at DESC);
+
+CREATE TABLE platform_alerts (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id text NOT NULL REFERENCES "user" (id) ON DELETE CASCADE,
+    source text NOT NULL,
+    event_key text NOT NULL,
+    severity text NOT NULL DEFAULT 'warning',
+    summary text NOT NULL,
+    detail text NOT NULL DEFAULT '',
+    href text NOT NULL DEFAULT '',
+    state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'acknowledged', 'resolved')),
+    created_at timestamptz NOT NULL DEFAULT now(),
+    updated_at timestamptz NOT NULL DEFAULT now(),
+    UNIQUE (user_id, source, event_key)
+);
+
+CREATE INDEX platform_alerts_owner_state ON platform_alerts (user_id, state, updated_at DESC);
+
+CREATE TABLE platform_alert_deliveries (
+    connection_id uuid NOT NULL REFERENCES eassist_connections (id) ON DELETE CASCADE,
+    alert_id uuid NOT NULL REFERENCES platform_alerts (id) ON DELETE CASCADE,
+    state text NOT NULL DEFAULT 'pending',
+    attempts integer NOT NULL DEFAULT 0,
+    last_error text NOT NULL DEFAULT '',
+    checked_at timestamptz,
+    next_attempt timestamptz NOT NULL DEFAULT now(),
+    lease_until timestamptz,
+    PRIMARY KEY (connection_id, alert_id)
+);
+
+CREATE TRIGGER platform_events_live
+AFTER INSERT OR UPDATE OR DELETE ON platform_events FOR EACH ROW
+EXECUTE FUNCTION eassist_changed ();
+
+CREATE TRIGGER platform_alerts_live
+AFTER INSERT OR UPDATE OR DELETE ON platform_alerts FOR EACH ROW
+EXECUTE FUNCTION eassist_changed ();
+
+CREATE FUNCTION platform_capture_change () RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE row_data jsonb; old_data jsonb; owner_id text; resource text; area text; action_name text; status_name text := 'success';
  href text; title text; alert_key text; emit_alert boolean := false; resolve_alert boolean := false;
 BEGIN
@@ -73,19 +98,72 @@ BEGIN
  END IF;
  RETURN NULL;
 END $$;
-CREATE TRIGGER platform_track_agents AFTER INSERT OR UPDATE OR DELETE ON agents FOR EACH ROW EXECUTE FUNCTION platform_capture_change('agent-studio','Agent');
-CREATE TRIGGER platform_track_agent_workflows AFTER INSERT OR UPDATE OR DELETE ON agent_workflows FOR EACH ROW EXECUTE FUNCTION platform_capture_change('reactflow','Workflow graph');
-CREATE TRIGGER platform_track_published_agents AFTER INSERT OR UPDATE OR DELETE ON published_agents FOR EACH ROW EXECUTE FUNCTION platform_capture_change('agent-studio','Agent publication');
-CREATE TRIGGER platform_track_tools AFTER INSERT OR UPDATE OR DELETE ON tools FOR EACH ROW EXECUTE FUNCTION platform_capture_change('agent-studio','Tool');
-CREATE TRIGGER platform_track_tool_knowledge AFTER INSERT OR UPDATE OR DELETE ON tool_knowledge FOR EACH ROW EXECUTE FUNCTION platform_capture_change('agent-studio','Tool analysis');
-CREATE TRIGGER platform_track_playground_settings AFTER INSERT OR UPDATE OR DELETE ON playground_settings FOR EACH ROW EXECUTE FUNCTION platform_capture_change('agent-studio','Playground configuration');
-CREATE TRIGGER platform_track_epace_projects AFTER INSERT OR UPDATE OR DELETE ON epace_projects FOR EACH ROW EXECUTE FUNCTION platform_capture_change('epace','Project configuration');
-CREATE TRIGGER platform_track_epace_records AFTER INSERT OR UPDATE OR DELETE ON epace_records FOR EACH ROW EXECUTE FUNCTION platform_capture_change('epace','Project record');
-CREATE TRIGGER platform_track_eassist_connections AFTER INSERT OR UPDATE OR DELETE ON eassist_connections FOR EACH ROW EXECUTE FUNCTION platform_capture_change('eassist','Integration');
-CREATE TRIGGER platform_track_eassist_records AFTER INSERT OR UPDATE OR DELETE ON eassist_records FOR EACH ROW EXECUTE FUNCTION platform_capture_change('semaphore','Automation task');
+
+CREATE TRIGGER platform_track_agents
+AFTER INSERT OR UPDATE OR DELETE ON agents FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('agent-studio', 'Agent');
+
+CREATE TRIGGER platform_track_agent_workflows
+AFTER INSERT OR UPDATE OR DELETE ON agent_workflows FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('reactflow', 'Workflow graph');
+
+CREATE TRIGGER platform_track_published_agents
+AFTER INSERT OR UPDATE OR DELETE ON published_agents FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('agent-studio', 'Agent publication');
+
+CREATE TRIGGER platform_track_tools
+AFTER INSERT OR UPDATE OR DELETE ON tools FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('agent-studio', 'Tool');
+
+CREATE TRIGGER platform_track_tool_knowledge
+AFTER INSERT OR UPDATE OR DELETE ON tool_knowledge FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('agent-studio', 'Tool analysis');
+
+CREATE TRIGGER platform_track_playground_settings
+AFTER INSERT OR UPDATE OR DELETE ON playground_settings FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('agent-studio', 'Playground configuration');
+
+CREATE TRIGGER platform_track_epace_projects
+AFTER INSERT OR UPDATE OR DELETE ON epace_projects FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('epace', 'Project configuration');
+
+CREATE TRIGGER platform_track_epace_records
+AFTER INSERT OR UPDATE OR DELETE ON epace_records FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('epace', 'Project record');
+
+CREATE TRIGGER platform_track_eassist_connections
+AFTER INSERT OR UPDATE OR DELETE ON eassist_connections FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('eassist', 'Integration');
+
+CREATE TRIGGER platform_track_eassist_records
+AFTER INSERT OR UPDATE OR DELETE ON eassist_records FOR EACH ROW
+EXECUTE FUNCTION platform_capture_change ('semaphore', 'Automation task');
 
 -- Recover existing unresolved safety/quality signals, without copying prompts or documents.
-INSERT INTO platform_alerts(user_id,source,event_key,summary,detail,href,created_at)
- SELECT user_id,'epace',CASE WHEN data->>'runId' IS NOT NULL THEN 'run:'||(data->>'runId') ELSE 'quality:'||id END,'ePACE quality or safety alert','Inspect the source alert in ePACE.','/service-review-center/epace',created_at
- FROM epace_records WHERE kind='alert' AND COALESCE(data->>'resolved','false')<>'true'
- ON CONFLICT DO NOTHING;
+INSERT INTO
+    platform_alerts (
+        user_id,
+        source,
+        event_key,
+        summary,
+        detail,
+        href,
+        created_at
+    )
+SELECT
+    user_id,
+    'epace',
+    CASE
+        WHEN data ->> 'runId' IS NOT NULL THEN 'run:' || (data ->> 'runId')
+        ELSE 'quality:' || id
+    END,
+    'ePACE quality or safety alert',
+    'Inspect the source alert in ePACE.',
+    '/service-review-center/epace',
+    created_at
+FROM
+    epace_records
+WHERE
+    kind = 'alert'
+    AND COALESCE(data ->> 'resolved', 'false') <> 'true'
+ON CONFLICT DO NOTHING;

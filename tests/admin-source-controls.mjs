@@ -1,23 +1,185 @@
-import 'dotenv/config';import assert from 'node:assert/strict';import {randomUUID,createHash} from 'node:crypto';import pg from 'pg';import {load} from './helpers/load-ts.mjs';
-const pool=new pg.Pool({connectionString:process.env.DATABASE_URL}),c=await pool.connect();let actor=null;
-const client={query:(sql,args)=>/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)?Promise.resolve({rows:[]}):c.query(sql,args),release(){}};const db={query:(sql,args)=>c.query(sql,args),connect:async()=>client};
-const session={getRequestSession:async()=>actor?{user:{id:actor}}:null},deps={'@/lib/db':{db},'./db':{db},'../db':{db},'@/lib/request-session':session};
-const settings=load('app/api/workspace/organization/route.ts',deps),tokens=load('app/api/service-review-center/token/route.ts',deps),records=load('app/api/service-review-center/records/route.ts',deps);
-function request(body,token,origin='http://localhost:3000'){return new Request('http://localhost:3000/api/service-review-center/records',{method:body?'POST':'GET',headers:{Origin:origin,'Content-Type':'application/json',...(token?{Authorization:'Bearer '+token}:{})},...(body?{body:JSON.stringify(body)}:{})});}
-async function fixture(role){const id=randomUUID();await c.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',[id,'Source controls fixture',id+'@example.invalid']);await c.query('UPDATE workspace_members SET role=$2 WHERE user_id=$1',[id,role]);return id;}
-try{
- await c.query('BEGIN');const admin=await fixture('admin'),other=await fixture('admin'),person=await fixture('user');actor=admin;
- const patch=async b=>settings.PATCH(request(b));
- assert.equal((await patch({action:'settings',ownerId:person,requestsPerMinute:100})).status,400);assert.equal((await patch({action:'settings',ownerId:other,requestsPerMinute:29})).status,400);
- assert.equal((await patch({action:'settings',ownerId:other,requestsPerMinute:120})).status,200);let state=(await c.query('SELECT * FROM organization_workspace WHERE id=true')).rows[0];assert.equal(state.owner_id,other);assert.equal(state.requests_per_minute,120);
- assert.equal((await patch({action:'settings',ownerId:admin,requestsPerMinute:90})).status,200);actor=person;assert.equal((await patch({action:'settings',ownerId:person,requestsPerMinute:100})).status,403);assert.equal((await tokens.POST(request({}))).status,401);actor=admin;
- let r=await tokens.POST(request({}));assert.equal(r.status,200);let token=(await r.json()).token;assert.ok(token.length>=40);let saved=(await c.query('SELECT token_hash FROM service_review_tokens WHERE user_id=$1',[admin])).rows[0];assert.equal(saved.token_hash,createHash('sha256').update(token).digest('hex'));const metadata=await (await tokens.GET(request())).json();assert.ok(!JSON.stringify(metadata).includes(token));
- const batch={batchId:randomUUID(),sourceName:'Isolated metric import',records:[{recordType:'metric',recordKey:'fixture-income',payload:{label:'Fixture income',value:42,unit:'USD'},observedAt:'2026-10-01T00:00:00Z'}]};
- r=await records.POST(request(batch));assert.equal(r.status,201);assert.equal((await r.json()).accepted,1);r=await records.POST(request(batch));assert.equal(r.status,200);assert.equal((await r.json()).duplicate,true);assert.equal((await records.POST(request({...batch,records:[{...batch.records[0],payload:{label:'Changed',value:43}}]}))).status,409);
- assert.equal((await records.POST(request({batchId:randomUUID(),records:[{recordType:'metric',recordKey:'bad',payload:{label:'No value'}}]}))).status,400);assert.equal((await records.POST(request({...batch,batchId:randomUUID()},null,'https://bad.example'))).status,403);
- actor=null;r=await records.POST(request({...batch,batchId:randomUUID()},token));assert.equal(r.status,201);r=await records.POST(request({...batch,batchId:randomUUID()},token));assert.equal(r.status,429);
- actor=admin;r=await tokens.POST(request({}));const newToken=(await r.json()).token;assert.notEqual(newToken,token);actor=null;assert.equal((await records.POST(request({...batch,batchId:randomUUID()},token))).status,401);assert.equal((await records.POST(request({...batch,batchId:randomUUID()},newToken))).status,201);
- actor=admin;assert.equal((await tokens.DELETE(request({}))).status,200);actor=null;assert.equal((await records.POST(request({...batch,batchId:randomUUID()},newToken))).status,401);
- const rows=await c.query('SELECT payload FROM service_review_records WHERE user_id=$1 AND record_key=$2',[admin,'fixture-income']);assert.equal(rows.rowCount,3);assert.ok(rows.rows.every(r=>r.payload.value===42));assert.equal((await c.query("SELECT 1 FROM workspace_audit WHERE actor_id=$1 AND action='organization.settings'",[admin])).rowCount,2);
- console.log('PASS organization settings and collector API: owner/limit validation, persisted settings/audit, Admin boundary, hashed token create/metadata/rotate/revoke, actual metric ingestion, repeat/conflict/rate/origin/schema rejection. All SQL rolled back; no external enrichment.');
-}finally{await c.query('ROLLBACK');c.release();await pool.end();}
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { randomUUID, createHash } from "node:crypto";
+import pg from "pg";
+import { load } from "./helpers/load-ts.mjs";
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+    c = await pool.connect();
+let actor = null;
+const client = {
+    query: (sql, args) =>
+        /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : c.query(sql, args),
+    release() {},
+};
+const db = { query: (sql, args) => c.query(sql, args), connect: async () => client };
+const session = { getRequestSession: async () => (actor ? { user: { id: actor } } : null) },
+    deps = {
+        "@/lib/db": { db },
+        "./db": { db },
+        "../db": { db },
+        "@/lib/request-session": session,
+    };
+const settings = load("app/api/workspace/organization/route.ts", deps),
+    tokens = load("app/api/service-review-center/token/route.ts", deps),
+    records = load("app/api/service-review-center/records/route.ts", deps);
+function request(body, token, origin = "http://localhost:3000") {
+    return new Request("http://localhost:3000/api/service-review-center/records", {
+        method: body ? "POST" : "GET",
+        headers: {
+            Origin: origin,
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: "Bearer " + token } : {}),
+        },
+        ...(body ? { body: JSON.stringify(body) } : {}),
+    });
+}
+async function fixture(role) {
+    const id = randomUUID();
+    await c.query(
+        'INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',
+        [id, "Source controls fixture", id + "@example.invalid"],
+    );
+    await c.query("UPDATE workspace_members SET role=$2 WHERE user_id=$1", [id, role]);
+    return id;
+}
+try {
+    await c.query("BEGIN");
+    const admin = await fixture("admin"),
+        other = await fixture("admin"),
+        person = await fixture("user");
+    actor = admin;
+    const patch = async (b) => settings.PATCH(request(b));
+    assert.equal(
+        (await patch({ action: "settings", ownerId: person, requestsPerMinute: 100 })).status,
+        400,
+    );
+    assert.equal(
+        (await patch({ action: "settings", ownerId: other, requestsPerMinute: 29 })).status,
+        400,
+    );
+    assert.equal(
+        (await patch({ action: "settings", ownerId: other, requestsPerMinute: 120 })).status,
+        200,
+    );
+    let state = (await c.query("SELECT * FROM organization_workspace WHERE id=true")).rows[0];
+    assert.equal(state.owner_id, other);
+    assert.equal(state.requests_per_minute, 120);
+    assert.equal(
+        (await patch({ action: "settings", ownerId: admin, requestsPerMinute: 90 })).status,
+        200,
+    );
+    actor = person;
+    assert.equal(
+        (await patch({ action: "settings", ownerId: person, requestsPerMinute: 100 })).status,
+        403,
+    );
+    assert.equal((await tokens.POST(request({}))).status, 401);
+    actor = admin;
+    let r = await tokens.POST(request({}));
+    assert.equal(r.status, 200);
+    let token = (await r.json()).token;
+    assert.ok(token.length >= 40);
+    let saved = (
+        await c.query("SELECT token_hash FROM service_review_tokens WHERE user_id=$1", [admin])
+    ).rows[0];
+    assert.equal(saved.token_hash, createHash("sha256").update(token).digest("hex"));
+    const metadata = await (await tokens.GET(request())).json();
+    assert.ok(!JSON.stringify(metadata).includes(token));
+    const batch = {
+        batchId: randomUUID(),
+        sourceName: "Isolated metric import",
+        records: [
+            {
+                recordType: "metric",
+                recordKey: "fixture-income",
+                payload: { label: "Fixture income", value: 42, unit: "USD" },
+                observedAt: "2026-10-01T00:00:00Z",
+            },
+        ],
+    };
+    r = await records.POST(request(batch));
+    assert.equal(r.status, 201);
+    assert.equal((await r.json()).accepted, 1);
+    r = await records.POST(request(batch));
+    assert.equal(r.status, 200);
+    assert.equal((await r.json()).duplicate, true);
+    assert.equal(
+        (
+            await records.POST(
+                request({
+                    ...batch,
+                    records: [{ ...batch.records[0], payload: { label: "Changed", value: 43 } }],
+                }),
+            )
+        ).status,
+        409,
+    );
+    assert.equal(
+        (
+            await records.POST(
+                request({
+                    batchId: randomUUID(),
+                    records: [
+                        { recordType: "metric", recordKey: "bad", payload: { label: "No value" } },
+                    ],
+                }),
+            )
+        ).status,
+        400,
+    );
+    assert.equal(
+        (
+            await records.POST(
+                request({ ...batch, batchId: randomUUID() }, null, "https://bad.example"),
+            )
+        ).status,
+        403,
+    );
+    actor = null;
+    r = await records.POST(request({ ...batch, batchId: randomUUID() }, token));
+    assert.equal(r.status, 201);
+    r = await records.POST(request({ ...batch, batchId: randomUUID() }, token));
+    assert.equal(r.status, 429);
+    actor = admin;
+    r = await tokens.POST(request({}));
+    const newToken = (await r.json()).token;
+    assert.notEqual(newToken, token);
+    actor = null;
+    assert.equal(
+        (await records.POST(request({ ...batch, batchId: randomUUID() }, token))).status,
+        401,
+    );
+    assert.equal(
+        (await records.POST(request({ ...batch, batchId: randomUUID() }, newToken))).status,
+        201,
+    );
+    actor = admin;
+    assert.equal((await tokens.DELETE(request({}))).status, 200);
+    actor = null;
+    assert.equal(
+        (await records.POST(request({ ...batch, batchId: randomUUID() }, newToken))).status,
+        401,
+    );
+    const rows = await c.query(
+        "SELECT payload FROM service_review_records WHERE user_id=$1 AND record_key=$2",
+        [admin, "fixture-income"],
+    );
+    assert.equal(rows.rowCount, 3);
+    assert.ok(rows.rows.every((r) => r.payload.value === 42));
+    assert.equal(
+        (
+            await c.query(
+                "SELECT 1 FROM workspace_audit WHERE actor_id=$1 AND action='organization.settings'",
+                [admin],
+            )
+        ).rowCount,
+        2,
+    );
+    console.log(
+        "PASS organization settings and collector API: owner/limit validation, persisted settings/audit, Admin boundary, hashed token create/metadata/rotate/revoke, actual metric ingestion, repeat/conflict/rate/origin/schema rejection. All SQL rolled back; no external enrichment.",
+    );
+} finally {
+    await c.query("ROLLBACK");
+    c.release();
+    await pool.end();
+}

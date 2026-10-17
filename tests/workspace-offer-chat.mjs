@@ -1,82 +1,293 @@
-import 'dotenv/config';
-import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import ts from 'typescript';
-import pg from 'pg';
-import * as marked from 'marked';
+import "dotenv/config";
+import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import ts from "typescript";
+import pg from "pg";
+import * as marked from "marked";
 const require = createRequire(import.meta.url);
-import { load } from './helpers/load-ts.mjs';
-process.env.MAIL_ENCRYPTION_KEY ||= 'ab'.repeat(32); process.env.SMTP_USER ||= 'fixture@example.invalid'; process.env.SMTP_PASS ||= 'fixture';
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL }), c = await pool.connect();
-const permissions = load('lib/workspace-permissions.ts'), templates = load('lib/mail-templates.ts'), guided = load('lib/guided-offer.ts', { './mail-templates': templates });
-const client = { query: (sql, args) => /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : c.query(sql, args), release() { } };
+import { load } from "./helpers/load-ts.mjs";
+process.env.MAIL_ENCRYPTION_KEY ||= "ab".repeat(32);
+process.env.SMTP_USER ||= "fixture@example.invalid";
+process.env.SMTP_PASS ||= "fixture";
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+    c = await pool.connect();
+const permissions = load("lib/workspace-permissions.ts"),
+    templates = load("lib/mail-templates.ts"),
+    guided = load("lib/guided-offer.ts", { "./mail-templates": templates });
+const client = {
+    query: (sql, args) =>
+        /^(BEGIN|COMMIT|ROLLBACK)$/.test(sql) ? Promise.resolve({ rows: [] }) : c.query(sql, args),
+    release() {},
+};
 const db = { connect: async () => client, query: (sql, args) => c.query(sql, args) };
-const mail = load('lib/mail.ts', { 'server-only': {}, './db': { db }, './mail-templates': templates });
-const templateTools = load('lib/offer-template.ts');
-const custom = load('lib/offer-customization.ts', { 'marked': marked, './mail-templates': templates, './guided-offer': guided, './mail-attachment-types': load('lib/mail-attachment-types.ts') });
-const store = load('lib/offer-template-store.ts', { 'server-only': {}, './mail': mail });
-const attachments = load('lib/organization-mail-attachments.ts', { 'server-only': {}, './mail': mail, './mail-attachment-types': load('lib/mail-attachment-types.ts') });
-const documentTools = load('lib/organization-documents.ts', { './offer-template': templateTools, './guided-offer': guided });
-const documentStore = load('lib/organization-document-store.ts', { 'server-only': {}, './mail': mail, './organization-documents': documentTools, './organization-mail-attachments': attachments });
-const deps = { './organization-mail-attachments': attachments, './offer-template-store': store, './offer-template': templateTools, './offer-customization': custom, './db': { db }, './workspace-permissions': permissions, './mail': mail, './mail-templates': templates, './guided-offer': guided };
-const { workspaceOfferChatReply: offer } = load('lib/workspace-offer-chat.ts', deps), { workspaceMailChatReply: send } = load('lib/workspace-mail-chat.ts', deps);
+const mail = load("lib/mail.ts", {
+    "server-only": {},
+    "./db": { db },
+    "./mail-templates": templates,
+});
+const templateTools = load("lib/offer-template.ts");
+const custom = load("lib/offer-customization.ts", {
+    marked: marked,
+    "./mail-templates": templates,
+    "./guided-offer": guided,
+    "./mail-attachment-types": load("lib/mail-attachment-types.ts"),
+});
+const store = load("lib/offer-template-store.ts", { "server-only": {}, "./mail": mail });
+const attachments = load("lib/organization-mail-attachments.ts", {
+    "server-only": {},
+    "./mail": mail,
+    "./mail-attachment-types": load("lib/mail-attachment-types.ts"),
+});
+const documentTools = load("lib/organization-documents.ts", {
+    "./offer-template": templateTools,
+    "./guided-offer": guided,
+});
+const documentStore = load("lib/organization-document-store.ts", {
+    "server-only": {},
+    "./mail": mail,
+    "./organization-documents": documentTools,
+    "./organization-mail-attachments": attachments,
+});
+const deps = {
+    "./organization-mail-attachments": attachments,
+    "./offer-template-store": store,
+    "./offer-template": templateTools,
+    "./offer-customization": custom,
+    "./db": { db },
+    "./workspace-permissions": permissions,
+    "./mail": mail,
+    "./mail-templates": templates,
+    "./guided-offer": guided,
+};
+const { workspaceOfferChatReply: offer } = load("lib/workspace-offer-chat.ts", deps),
+    { workspaceMailChatReply: send } = load("lib/workspace-mail-chat.ts", deps);
 try {
-    await c.query('BEGIN'); await c.query("DELETE FROM organization_mail_templates WHERE kind='offer'"); const id = randomUUID(); await c.query('INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())', [id, 'Sending Admin', id + '@example.invalid']); await c.query("UPDATE workspace_members SET role='admin' WHERE user_id=$1", [id]);
-    const admin = { user_id: id, role: 'admin', active: true, permissions: [] };
-    assert.match((await offer(id, 'I want to give a Offer letter', { ...admin, role: 'manager' })).reply, /Only an active Admin/);
-    assert.match((await offer(id, 'I want to give a Offer letter', admin)).reply, /full name/);
-    assert.match((await offer(id, 'Abhinav', admin)).reply, /email address/);
-    assert.match((await offer(id, 'invalid', admin)).reply, /valid recipient/);
-    assert.match((await offer(id, 'candidate@example.com', admin)).reply, /position/);
-    assert.match((await offer(id, 'Software Development', admin)).reply, /department/);
-    const department = (await c.query('SELECT name FROM staff_departments ORDER BY code LIMIT 1')).rows[0].name;
-    assert.ok((await offer(id, department, admin)).choices.includes('Full-time'));
-    assert.ok((await offer(id, 'Full-time', admin)).choices.includes('Remote'));
-    await offer(id, 'Remote', admin);
-    assert.match((await offer(id, '2026-02-30', admin)).reply, /valid joining date/);
-    assert.ok((await offer(id, '2026-11-02', admin)).choices.some(x => x.includes('Sending Admin')));
-    await offer(id, 'Engineering Lead', admin);
-    assert.match((await offer(id, '40000', admin)).reply, /currency and pay period/);
-    assert.ok((await offer(id, 'INR 40,000 per month', admin)).choices.includes('No additional note'));
-    const missing = await offer(id, 'No additional note', admin); assert.match(missing.reply, /phone number/); assert.ok(!missing.choices.some(x => x.startsWith('Confirm send')));
-    await c.query("INSERT INTO account_profiles(user_id,phone) VALUES($1,'+91 9000000000') ON CONFLICT(user_id) DO UPDATE SET phone=excluded.phone", [id]);
-    const preview = await offer(id, 'Continue offer preview', admin); assert.match(preview.reply, /Review your offer letter/); assert.match(preview.reply, /Abhinav/); assert.match(preview.reply, /Sending Admin/); assert.match(preview.reply, /9000000000/); assert.match(preview.reply, /Contact us/); assert.ok(preview.choices.includes('Edit offer details'));
-    assert.equal((await c.query('SELECT 1 FROM mail_outbox WHERE actor_id=$1', [id])).rowCount, 0);
-    const oldConfirm = preview.choices[0]; await offer(id, 'Edit offer details', admin); await offer(id, 'Edit offer Approved compensation', admin); const edited = await offer(id, 'INR 50,000 per month', admin); assert.match(edited.reply, /50,000/);
+    await c.query("BEGIN");
+    await c.query("DELETE FROM organization_mail_templates WHERE kind='offer'");
+    const id = randomUUID();
+    await c.query(
+        'INSERT INTO "user"(id,name,email,"emailVerified","createdAt","updatedAt") VALUES($1,$2,$3,true,now(),now())',
+        [id, "Sending Admin", id + "@example.invalid"],
+    );
+    await c.query("UPDATE workspace_members SET role='admin' WHERE user_id=$1", [id]);
+    const admin = { user_id: id, role: "admin", active: true, permissions: [] };
+    assert.match(
+        (await offer(id, "I want to give a Offer letter", { ...admin, role: "manager" })).reply,
+        /Only an active Admin/,
+    );
+    assert.match((await offer(id, "I want to give a Offer letter", admin)).reply, /full name/);
+    assert.match((await offer(id, "Abhinav", admin)).reply, /email address/);
+    assert.match((await offer(id, "invalid", admin)).reply, /valid recipient/);
+    assert.match((await offer(id, "candidate@example.com", admin)).reply, /position/);
+    assert.match((await offer(id, "Software Development", admin)).reply, /department/);
+    const department = (await c.query("SELECT name FROM staff_departments ORDER BY code LIMIT 1"))
+        .rows[0].name;
+    assert.ok((await offer(id, department, admin)).choices.includes("Full-time"));
+    assert.ok((await offer(id, "Full-time", admin)).choices.includes("Remote"));
+    await offer(id, "Remote", admin);
+    assert.match((await offer(id, "2026-02-30", admin)).reply, /valid joining date/);
+    assert.ok(
+        (await offer(id, "2026-11-02", admin)).choices.some((x) => x.includes("Sending Admin")),
+    );
+    await offer(id, "Engineering Lead", admin);
+    assert.match((await offer(id, "40000", admin)).reply, /currency and pay period/);
+    assert.ok(
+        (await offer(id, "INR 40,000 per month", admin)).choices.includes("No additional note"),
+    );
+    const missing = await offer(id, "No additional note", admin);
+    assert.match(missing.reply, /phone number/);
+    assert.ok(!missing.choices.some((x) => x.startsWith("Confirm send")));
+    await c.query(
+        "INSERT INTO account_profiles(user_id,phone) VALUES($1,'+91 9000000000') ON CONFLICT(user_id) DO UPDATE SET phone=excluded.phone",
+        [id],
+    );
+    const preview = await offer(id, "Continue offer preview", admin);
+    assert.match(preview.reply, /Review your offer letter/);
+    assert.match(preview.reply, /Abhinav/);
+    assert.match(preview.reply, /Sending Admin/);
+    assert.match(preview.reply, /9000000000/);
+    assert.match(preview.reply, /Contact us/);
+    assert.ok(preview.choices.includes("Edit offer details"));
+    assert.equal((await c.query("SELECT 1 FROM mail_outbox WHERE actor_id=$1", [id])).rowCount, 0);
+    const oldConfirm = preview.choices[0];
+    await offer(id, "Edit offer details", admin);
+    await offer(id, "Edit offer Approved compensation", admin);
+    const edited = await offer(id, "INR 50,000 per month", admin);
+    assert.match(edited.reply, /50,000/);
     assert.match((await send(id, oldConfirm, admin)).reply, /expired or was replaced/);
     assert.equal(await offer(id, edited.choices[0], admin), null);
     assert.match((await send(id, edited.choices[0], admin)).reply, /Email queued/);
-    const outbox = (await c.query('SELECT * FROM mail_outbox WHERE actor_id=$1', [id])).rows[0], content = mail.decryptMail(outbox.encrypted_content);
-    assert.equal(outbox.recipient, 'candidate@example.com'); assert.equal(content.replyTo, id + '@example.invalid'); assert.match(content.text, /INR 50,000 per month/); assert.ok(!content.text.includes('{{')); assert.match(content.html, /<table/); assert.match(content.html, /Contact us/);
+    const outbox = (await c.query("SELECT * FROM mail_outbox WHERE actor_id=$1", [id])).rows[0],
+        content = mail.decryptMail(outbox.encrypted_content);
+    assert.equal(outbox.recipient, "candidate@example.com");
+    assert.equal(content.replyTo, id + "@example.invalid");
+    assert.match(content.text, /INR 50,000 per month/);
+    assert.ok(!content.text.includes("{{"));
+    assert.match(content.html, /<table/);
+    assert.match(content.html, /Contact us/);
     assert.match((await send(id, edited.choices[0], admin)).reply, /expired or was replaced/);
-    const seeded = await offer(id, 'Send Offer Letter to candidate2@example.com\nName: Other Candidate\nRole: Security Engineer', admin); assert.match(seeded.reply, /department/); assert.doesNotMatch(seeded.reply, /body/);
-    const stored = (await c.query('SELECT draft FROM workspace_chat_actions WHERE user_id=$1', [id])).rows[0].draft; assert.ok(!JSON.stringify(stored).includes('Other Candidate')); assert.equal(JSON.parse(mail.decryptMail(stored.form).text).name, 'Other Candidate');
-    await send(id, 'Cancel email', admin);
-    const api = load('app/api/workspace/admin/mail/customization/route.ts', { '@/lib/db': { db }, '@/lib/request-session': { getRequestSession: async () => ({ user: { id, name: 'Sending Admin', email: id + '@example.invalid' } }) }, '@/lib/workspace-access': { workspaceAccess: async () => admin }, '@/lib/workspace-permissions': permissions, '@/lib/service-review/ingestion': { requireSameOrigin: r => { if (r.headers.get('origin') !== 'http://localhost:3000') throw new Error(); } }, '@/lib/mail': mail, '@/lib/staff-catalog': { readStaffCatalog: async () => ({ departments: [], jobTitles: [], qualifications: [] }) }, '@/lib/offer-customization': custom, '@/lib/organization-document-store': documentStore, '@/lib/organization-documents': documentTools, '@/lib/organization-mail-attachments': attachments, '@/lib/offer-template-store': store, '@/lib/offer-template': templateTools });
-    const attachmentId = randomUUID(); await c.query('INSERT INTO organization_mail_attachments(id,document_type,filename,content_type,size_bytes,encrypted_content,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)', [attachmentId, 'offer', 'offer-guide.txt', 'text/plain', 18, mail.encryptMail({ subject: 'guide', text: Buffer.from('Fixture guide file').toString('base64'), html: '' }), id]);
-    const customized = { attachmentIds: [attachmentId], markdown: templateTools.defaultOfferTemplate + '\n\n**Saved organization clause:** Welcome to our engineering team, {{name}}.', subject: 'Our custom offer for {{role}}', revision: 0 };
-    const saveRequest = body => new Request('http://localhost:3000/api/workspace/admin/mail/customization', { method: 'PUT', headers: { origin: 'http://localhost:3000' }, body: JSON.stringify(body) });
-    const saved = await api.PUT(saveRequest(customized)); assert.equal(saved.status, 200); assert.equal((await saved.json()).template.revision, 1);
+    const seeded = await offer(
+        id,
+        "Send Offer Letter to candidate2@example.com\nName: Other Candidate\nRole: Security Engineer",
+        admin,
+    );
+    assert.match(seeded.reply, /department/);
+    assert.doesNotMatch(seeded.reply, /body/);
+    const stored = (
+        await c.query("SELECT draft FROM workspace_chat_actions WHERE user_id=$1", [id])
+    ).rows[0].draft;
+    assert.ok(!JSON.stringify(stored).includes("Other Candidate"));
+    assert.equal(JSON.parse(mail.decryptMail(stored.form).text).name, "Other Candidate");
+    await send(id, "Cancel email", admin);
+    const api = load("app/api/workspace/admin/mail/customization/route.ts", {
+        "@/lib/db": { db },
+        "@/lib/request-session": {
+            getRequestSession: async () => ({
+                user: { id, name: "Sending Admin", email: id + "@example.invalid" },
+            }),
+        },
+        "@/lib/workspace-access": { workspaceAccess: async () => admin },
+        "@/lib/workspace-permissions": permissions,
+        "@/lib/service-review/ingestion": {
+            requireSameOrigin: (r) => {
+                if (r.headers.get("origin") !== "http://localhost:3000") throw new Error();
+            },
+        },
+        "@/lib/mail": mail,
+        "@/lib/staff-catalog": {
+            readStaffCatalog: async () => ({ departments: [], jobTitles: [], qualifications: [] }),
+        },
+        "@/lib/offer-customization": custom,
+        "@/lib/organization-document-store": documentStore,
+        "@/lib/organization-documents": documentTools,
+        "@/lib/organization-mail-attachments": attachments,
+        "@/lib/offer-template-store": store,
+        "@/lib/offer-template": templateTools,
+    });
+    const attachmentId = randomUUID();
+    await c.query(
+        "INSERT INTO organization_mail_attachments(id,document_type,filename,content_type,size_bytes,encrypted_content,created_by) VALUES($1,$2,$3,$4,$5,$6,$7)",
+        [
+            attachmentId,
+            "offer",
+            "offer-guide.txt",
+            "text/plain",
+            18,
+            mail.encryptMail({
+                subject: "guide",
+                text: Buffer.from("Fixture guide file").toString("base64"),
+                html: "",
+            }),
+            id,
+        ],
+    );
+    const customized = {
+        attachmentIds: [attachmentId],
+        markdown:
+            templateTools.defaultOfferTemplate +
+            "\n\n**Saved organization clause:** Welcome to our engineering team, {{name}}.",
+        subject: "Our custom offer for {{role}}",
+        revision: 0,
+    };
+    const saveRequest = (body) =>
+        new Request("http://localhost:3000/api/workspace/admin/mail/customization", {
+            method: "PUT",
+            headers: { origin: "http://localhost:3000" },
+            body: JSON.stringify(body),
+        });
+    const saved = await api.PUT(saveRequest(customized));
+    assert.equal(saved.status, 200);
+    assert.equal((await saved.json()).template.revision, 1);
     assert.equal((await api.PUT(saveRequest(customized))).status, 409);
-    assert.equal((await api.PUT(saveRequest({ ...customized, markdown: 'No candidate or position', revision: 1 }))).status, 400);
-    const persisted = await store.readOfferTemplate(client); assert.equal(persisted.markdown, customized.markdown); assert.equal(persisted.subject, customized.subject);
-    const second = await offer(id, 'Send offer letter to next@example.com\nName: Next Person\nRole: Software Development', admin);
+    assert.equal(
+        (
+            await api.PUT(
+                saveRequest({ ...customized, markdown: "No candidate or position", revision: 1 }),
+            )
+        ).status,
+        400,
+    );
+    const persisted = await store.readOfferTemplate(client);
+    assert.equal(persisted.markdown, customized.markdown);
+    assert.equal(persisted.subject, customized.subject);
+    const second = await offer(
+        id,
+        "Send offer letter to next@example.com\nName: Next Person\nRole: Software Development",
+        admin,
+    );
     assert.match(second.reply, /department/);
-    for (const answer of [department, 'Full-time', 'Remote', '2026-11-02', 'Engineering Lead', 'INR 4 lakh per annum']) await offer(id, answer, admin);
-    const savedPreview = await offer(id, 'No additional note', admin);
-    assert.match(savedPreview.reply, /Saved organization clause/); assert.match(savedPreview.reply, /Next Person/); assert.match(savedPreview.reply, /Our custom offer for Software Development/);
+    for (const answer of [
+        department,
+        "Full-time",
+        "Remote",
+        "2026-11-02",
+        "Engineering Lead",
+        "INR 4 lakh per annum",
+    ])
+        await offer(id, answer, admin);
+    const savedPreview = await offer(id, "No additional note", admin);
+    assert.match(savedPreview.reply, /Saved organization clause/);
+    assert.match(savedPreview.reply, /Next Person/);
+    assert.match(savedPreview.reply, /Our custom offer for Software Development/);
     await send(id, savedPreview.choices[0], admin);
-    const savedEmail = (await c.query('SELECT encrypted_content FROM mail_outbox WHERE actor_id=$1 AND recipient=$2', [id, 'next@example.com'])).rows[0];
-    const rendered = mail.decryptMail(savedEmail.encrypted_content); assert.match(rendered.html, /<strong>Saved organization clause:<\/strong>/); assert.ok(!rendered.text.includes('{{')); assert.equal(rendered.subject, 'Our custom offer for Software Development'); assert.equal(rendered.attachments[0].filename, 'offer-guide.txt'); assert.equal(Buffer.from(rendered.attachments[0].content, 'base64').toString(), 'Fixture guide file'); assert.match(rendered.html, /data-mail-theme="purple"/);
-    console.log('PASS: database template save/reload, version conflict, saved wording fills next candidate and reaches encrypted chatbot mail queue. Transaction rolled back.');
-    const prefilledOffer = await offer(id, 'Prepare offer letter', admin, { name: 'Seeded Recipient', email: 'seeded@example.com', role: 'Software Development', department, employmentType: 'Full-time', location: 'Remote', joiningDate: '2026-11-02', reportingManager: 'Engineering Lead', compensation: 'INR 4 lakh per annum', note: '' });
-    assert.match(prefilledOffer.reply, /Review your offer letter/); assert.match(prefilledOffer.reply, /Seeded Recipient/); assert.match(prefilledOffer.reply, /Our custom offer for Software Development/);
-    await send(id, 'Cancel email', admin);
-    const partial = await offer(id, 'Prepare offer letter', admin, { name: 'Partial Recipient', email: 'partial@example.com', role: 'Software Development', department, employmentType: 'Full-time', location: 'Remote', joiningDate: '2026-02-30', reportingManager: 'Engineering Lead', compensation: 'INR 4 lakh per annum', note: '' });
-    assert.match(partial.reply, /joining date/); assert.ok(!partial.choices.some(choice => choice.startsWith('Confirm send email')));
-    await send(id, 'Cancel email', admin);
+    const savedEmail = (
+        await c.query(
+            "SELECT encrypted_content FROM mail_outbox WHERE actor_id=$1 AND recipient=$2",
+            [id, "next@example.com"],
+        )
+    ).rows[0];
+    const rendered = mail.decryptMail(savedEmail.encrypted_content);
+    assert.match(rendered.html, /<strong>Saved organization clause:<\/strong>/);
+    assert.ok(!rendered.text.includes("{{"));
+    assert.equal(rendered.subject, "Our custom offer for Software Development");
+    assert.equal(rendered.attachments[0].filename, "offer-guide.txt");
+    assert.equal(
+        Buffer.from(rendered.attachments[0].content, "base64").toString(),
+        "Fixture guide file",
+    );
+    assert.match(rendered.html, /data-mail-theme="purple"/);
+    console.log(
+        "PASS: database template save/reload, version conflict, saved wording fills next candidate and reaches encrypted chatbot mail queue. Transaction rolled back.",
+    );
+    const prefilledOffer = await offer(id, "Prepare offer letter", admin, {
+        name: "Seeded Recipient",
+        email: "seeded@example.com",
+        role: "Software Development",
+        department,
+        employmentType: "Full-time",
+        location: "Remote",
+        joiningDate: "2026-11-02",
+        reportingManager: "Engineering Lead",
+        compensation: "INR 4 lakh per annum",
+        note: "",
+    });
+    assert.match(prefilledOffer.reply, /Review your offer letter/);
+    assert.match(prefilledOffer.reply, /Seeded Recipient/);
+    assert.match(prefilledOffer.reply, /Our custom offer for Software Development/);
+    await send(id, "Cancel email", admin);
+    const partial = await offer(id, "Prepare offer letter", admin, {
+        name: "Partial Recipient",
+        email: "partial@example.com",
+        role: "Software Development",
+        department,
+        employmentType: "Full-time",
+        location: "Remote",
+        joiningDate: "2026-02-30",
+        reportingManager: "Engineering Lead",
+        compensation: "INR 4 lakh per annum",
+        note: "",
+    });
+    assert.match(partial.reply, /joining date/);
+    assert.ok(!partial.choices.some((choice) => choice.startsWith("Confirm send email")));
+    await send(id, "Cancel email", admin);
 
-    console.log('PASS: natural offer intent, guided buttons, required-field/date/compensation validation, profile name/email/phone, reply-to, generated professional HTML/text, no body prompt, encrypted draft, edit invalidation, confirmed queue and replay prevention. Fixtures rolled back; no external mail sent.');
-} finally { await c.query('ROLLBACK'); c.release(); await pool.end(); }
+    console.log(
+        "PASS: natural offer intent, guided buttons, required-field/date/compensation validation, profile name/email/phone, reply-to, generated professional HTML/text, no body prompt, encrypted draft, edit invalidation, confirmed queue and replay prevention. Fixtures rolled back; no external mail sent.",
+    );
+} finally {
+    await c.query("ROLLBACK");
+    c.release();
+    await pool.end();
+}

@@ -1,42 +1,169 @@
-import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
-import {createRequire} from 'node:module';
-import {randomUUID} from 'node:crypto';
-import ts from 'typescript';
-const require=createRequire(import.meta.url);
-function load(path,deps={}){const m={exports:{}};new Function('require','module','exports',ts.transpileModule(readFileSync(path,'utf8'),{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022,esModuleInterop:true}}).outputText)(n=>n in deps?deps[n]:require(n),m,m.exports);return m.exports;}
-const graphs=load('lib/agent-studio-graph.ts');
-const parent=randomUUID(),child=randomUUID(),user=randomUUID(),publicId=randomUUID();
-const graph=graphs.studioGraph('Parent','gpt-5-nano','Saved instructions');
-graph.nodes.find(n=>n.id==='model').data.modelId='gpt-4.1-mini';
-graph.nodes.push({id:'child',type:'ReferenceNode',position:{x:1,y:1},data:{label:'Child',referenceKind:'agent',referenceId:child,apiKeyDraft:'must-not-export'}});graph.edges.push({id:'child-edge',source:'agents',target:'child'});
-const agent={id:parent,name:'Parent',purpose:'test',modelId:'gpt-5-nano',instructions:'fallback'};
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
+import ts from "typescript";
+const require = createRequire(import.meta.url);
+function load(path, deps = {}) {
+    const m = { exports: {} };
+    new Function(
+        "require",
+        "module",
+        "exports",
+        ts.transpileModule(readFileSync(path, "utf8"), {
+            compilerOptions: {
+                module: ts.ModuleKind.CommonJS,
+                target: ts.ScriptTarget.ES2022,
+                esModuleInterop: true,
+            },
+        }).outputText,
+    )((n) => (n in deps ? deps[n] : require(n)), m, m.exports);
+    return m.exports;
+}
+const graphs = load("lib/agent-studio-graph.ts");
+const parent = randomUUID(),
+    child = randomUUID(),
+    user = randomUUID(),
+    publicId = randomUUID();
+const graph = graphs.studioGraph("Parent", "gpt-5-nano", "Saved instructions");
+graph.nodes.find((n) => n.id === "model").data.modelId = "gpt-4.1-mini";
+graph.nodes.push({
+    id: "child",
+    type: "ReferenceNode",
+    position: { x: 1, y: 1 },
+    data: {
+        label: "Child",
+        referenceKind: "agent",
+        referenceId: child,
+        apiKeyDraft: "must-not-export",
+    },
+});
+graph.edges.push({ id: "child-edge", source: "agents", target: "child" });
+const agent = {
+    id: parent,
+    name: "Parent",
+    purpose: "test",
+    modelId: "gpt-5-nano",
+    instructions: "fallback",
+};
 let snapshot;
-const client={release(){},async query(sql,args){
- if(sql.includes('SELECT id, name')) return {rowCount:1,rows:[agent]};
- if(sql.includes('SELECT public_id'))return {rows:[]};
- if(sql.includes('SELECT graph'))return {rows:[{graph}]};
- if(sql.includes('SELECT a.id'))return {rows:[{...agent,id:args[1],graph:args[1]===parent?graph:graphs.studioGraph('Child')}]};
- if(sql.includes('INSERT INTO published_agents'))snapshot=JSON.parse(args[5]);
- return {rowCount:1,rows:[]};
-}};
-const session={getRequestSession:async()=>({user:{id:user}})};
-const access={'@/lib/workspace-access':{workspaceAccess:async()=>({})},'@/lib/workspace-permissions':{permitted:()=>true}};
-const flows=load('lib/agent-flow.ts',{'./eassist/transport':{InputError:Error},'./agent-studio-graph':graphs});
-const publish=load('app/api/agents/[agentId]/publish/route.ts',{'@/lib/agent-flow':flows,'@/lib/db':{db:{connect:async()=>client}},'@/lib/request-session':session,'@/lib/agent-studio-graph':graphs,'@/lib/service-review/ingestion':{requireSameOrigin:()=>{}},...access});
-const response=await publish.POST(new Request('http://localhost/api',{method:'POST'}),{params:Promise.resolve({agentId:parent})});
-assert.equal(response.status,201);assert.equal(snapshot.requiresOwnerSession,true);assert.equal(snapshot.agent.modelId,'gpt-4.1-mini');assert.equal(Object.keys(snapshot.releases).length,2);assert.ok(!JSON.stringify(snapshot).includes('must-not-export'));
-let ran=0;
-const published=load('app/api/published-agents/[publicId]/chat/route.ts',{'@/lib/request-session':{getRequestSession:async()=>null},...access,'@/lib/agent-studio-runtime':{runStudioAgent:async()=>{ran++;}},'@/lib/model-pricing':{},'@/lib/eassist/platform':{},'@/config/Arcjet':{protectOpenAiRequest:async()=>null},'@/lib/db':{db:{query:async()=>({rows:[{userId:user,agentId:parent,snapshot}]})}},'@/lib/model-usage':{},'@/lib/chat-efficiency':{},'@/lib/local-chat-usage':{}});
-process.env.OPENAI_API_KEY='fixture-not-used';
-const denied=await published.POST(new Request('http://localhost/api',{method:'POST',body:JSON.stringify({input:'Hello'})}),{params:Promise.resolve({publicId})});
-assert.equal(denied.status,403);assert.equal(ran,0);
-console.log('PASS: publication freezes connected agents, chooses the connected model, strips credentials, and denies anonymous private-data execution. No provider calls.');
+const client = {
+    release() {},
+    async query(sql, args) {
+        if (sql.includes("SELECT id, name")) return { rowCount: 1, rows: [agent] };
+        if (sql.includes("SELECT public_id")) return { rows: [] };
+        if (sql.includes("SELECT graph")) return { rows: [{ graph }] };
+        if (sql.includes("SELECT a.id"))
+            return {
+                rows: [
+                    {
+                        ...agent,
+                        id: args[1],
+                        graph: args[1] === parent ? graph : graphs.studioGraph("Child"),
+                    },
+                ],
+            };
+        if (sql.includes("INSERT INTO published_agents")) snapshot = JSON.parse(args[5]);
+        return { rowCount: 1, rows: [] };
+    },
+};
+const session = { getRequestSession: async () => ({ user: { id: user } }) };
+const access = {
+    "@/lib/workspace-access": { workspaceAccess: async () => ({}) },
+    "@/lib/workspace-permissions": { permitted: () => true },
+};
+const flows = load("lib/agent-flow.ts", {
+    "./eassist/transport": { InputError: Error },
+    "./agent-studio-graph": graphs,
+});
+const publish = load("app/api/agents/[agentId]/publish/route.ts", {
+    "@/lib/agent-flow": flows,
+    "@/lib/db": { db: { connect: async () => client } },
+    "@/lib/request-session": session,
+    "@/lib/agent-studio-graph": graphs,
+    "@/lib/service-review/ingestion": { requireSameOrigin: () => {} },
+    ...access,
+});
+const response = await publish.POST(new Request("http://localhost/api", { method: "POST" }), {
+    params: Promise.resolve({ agentId: parent }),
+});
+assert.equal(response.status, 201);
+assert.equal(snapshot.requiresOwnerSession, true);
+assert.equal(snapshot.agent.modelId, "gpt-4.1-mini");
+assert.equal(Object.keys(snapshot.releases).length, 2);
+assert.ok(!JSON.stringify(snapshot).includes("must-not-export"));
+let ran = 0;
+const published = load("app/api/published-agents/[publicId]/chat/route.ts", {
+    "@/lib/request-session": { getRequestSession: async () => null },
+    ...access,
+    "@/lib/agent-studio-runtime": {
+        runStudioAgent: async () => {
+            ran++;
+        },
+    },
+    "@/lib/model-pricing": {},
+    "@/lib/eassist/platform": {},
+    "@/config/Arcjet": { protectOpenAiRequest: async () => null },
+    "@/lib/db": {
+        db: { query: async () => ({ rows: [{ userId: user, agentId: parent, snapshot }] }) },
+    },
+    "@/lib/model-usage": {},
+    "@/lib/chat-efficiency": {},
+    "@/lib/local-chat-usage": {},
+});
+process.env.OPENAI_API_KEY = "fixture-not-used";
+const denied = await published.POST(
+    new Request("http://localhost/api", {
+        method: "POST",
+        body: JSON.stringify({ input: "Hello" }),
+    }),
+    { params: Promise.resolve({ publicId }) },
+);
+assert.equal(denied.status, 403);
+assert.equal(ran, 0);
+console.log(
+    "PASS: publication freezes connected agents, chooses the connected model, strips credentials, and denies anonymous private-data execution. No provider calls.",
+);
 
 let importedGraph;
-const imports=load('app/api/agents/import-published/route.ts',{'@/lib/request-session':session,...access,'@/lib/db':{db:{query:async()=>({rows:[]}),connect:async()=>({release(){},async query(sql,args){if(sql.includes('INSERT INTO agent_workflows'))importedGraph=JSON.parse(args[2]);return {rows:[]};}})}}});
-const imported=await imports.POST(new Request('http://localhost/api',{method:'POST',body:JSON.stringify({code:JSON.stringify({agent,graph})})}));
-assert.equal(imported.status,201);assert.equal(importedGraph.nodes.length,7);assert.ok(!JSON.stringify(importedGraph).includes('must-not-export'));
-const invalid=await imports.POST(new Request('http://localhost/api',{method:'POST',body:JSON.stringify({code:JSON.stringify({agent,graph:{nodes:[{id:'bad',type:'BadNode'}],edges:[]}})})}));
-assert.equal(invalid.status,400);
-console.log('PASS: JSON workflow import preserves valid connections, strips secrets and rejects malformed nodes.');
+const imports = load("app/api/agents/import-published/route.ts", {
+    "@/lib/request-session": session,
+    ...access,
+    "@/lib/db": {
+        db: {
+            query: async () => ({ rows: [] }),
+            connect: async () => ({
+                release() {},
+                async query(sql, args) {
+                    if (sql.includes("INSERT INTO agent_workflows"))
+                        importedGraph = JSON.parse(args[2]);
+                    return { rows: [] };
+                },
+            }),
+        },
+    },
+});
+const imported = await imports.POST(
+    new Request("http://localhost/api", {
+        method: "POST",
+        body: JSON.stringify({ code: JSON.stringify({ agent, graph }) }),
+    }),
+);
+assert.equal(imported.status, 201);
+assert.equal(importedGraph.nodes.length, 7);
+assert.ok(!JSON.stringify(importedGraph).includes("must-not-export"));
+const invalid = await imports.POST(
+    new Request("http://localhost/api", {
+        method: "POST",
+        body: JSON.stringify({
+            code: JSON.stringify({
+                agent,
+                graph: { nodes: [{ id: "bad", type: "BadNode" }], edges: [] },
+            }),
+        }),
+    }),
+);
+assert.equal(invalid.status, 400);
+console.log(
+    "PASS: JSON workflow import preserves valid connections, strips secrets and rejects malformed nodes.",
+);
