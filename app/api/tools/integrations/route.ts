@@ -17,6 +17,7 @@ import {
     prepareIntegration,
 } from "@/lib/integrations/runtime";
 import { db } from "@/lib/db";
+import { adminLibrarySettingsOwner } from "@/lib/admin-library";
 import { configureMonitor, monitorSnapshot } from "@/lib/integrations/monitor";
 
 export const runtime = "nodejs";
@@ -39,10 +40,11 @@ export async function GET(request: Request) {
     if (!session?.user) return reply({ error: "Sign in first." }, 401);
     try {
         const access = await requireIntegrationAccess(session.user.id);
+        const libraryOwner = await adminLibrarySettingsOwner(session.user.id);
         const privateRows = (
             await db.query(
                 "SELECT provider,config,enabled,revision,checked_at,check_state,check_message,updated_at,secret_cipher FROM integration_connections WHERE user_id=$1",
-                [session.user.id],
+                [libraryOwner],
             )
         ).rows;
         const rows = privateRows.map((row) => {
@@ -59,7 +61,7 @@ export async function GET(request: Request) {
         const existing = (
             await db.query(
                 "SELECT id,name,kind FROM eassist_connections WHERE user_id=$1 AND enabled=true AND kind IN ('servicenow','semaphore') ORDER BY name",
-                [session.user.id],
+                [libraryOwner],
             )
         ).rows;
         const history = (
@@ -71,7 +73,7 @@ export async function GET(request: Request) {
         const monitors = (
             await db.query(
                 "SELECT provider,operation,enabled,interval_seconds,last_status,last_checked_at FROM integration_monitors WHERE user_id=$1",
-                [session.user.id],
+                [libraryOwner],
             )
         ).rows;
         const catalog = await listProviders(session.user.id),
@@ -147,7 +149,7 @@ export async function POST(request: Request) {
         }
         if (b.action === "disconnect") {
             await db.query("DELETE FROM integration_connections WHERE user_id=$1 AND provider=$2", [
-                session.user.id,
+                await adminLibrarySettingsOwner(session.user.id),
                 provider,
             ]);
             await db.query("DELETE FROM integration_approvals WHERE user_id=$1 AND provider=$2", [
@@ -175,7 +177,7 @@ export async function POST(request: Request) {
                     ? (
                           await db.query(
                               "SELECT revision FROM integration_connections WHERE user_id=$1 AND provider=$2",
-                              [session.user.id, provider],
+                              [await adminLibrarySettingsOwner(session.user.id), provider],
                           )
                       ).rows[0]?.revision
                     : undefined;
@@ -189,7 +191,7 @@ export async function POST(request: Request) {
                 if (b.action === "check")
                     await db.query(
                         "UPDATE integration_connections SET checked_at=now(),check_state='reachable',check_message='Selected read operation succeeded. Other operations require their own permissions.' WHERE user_id=$1 AND provider=$2 AND revision=$3",
-                        [session.user.id, provider, revision],
+                        [await adminLibrarySettingsOwner(session.user.id), provider, revision],
                     );
                 return reply(result);
             } catch (error) {
@@ -197,7 +199,7 @@ export async function POST(request: Request) {
                     await db.query(
                         "UPDATE integration_connections SET checked_at=now(),check_state='failed',check_message=$3 WHERE user_id=$1 AND provider=$2 AND revision=$4",
                         [
-                            session.user.id,
+                            await adminLibrarySettingsOwner(session.user.id),
                             provider,
                             error instanceof InputError ? error.message : "Connection check failed",
                             revision,

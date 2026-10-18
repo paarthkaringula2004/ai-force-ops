@@ -26,7 +26,7 @@ export async function GET(request: Request) {
             `SELECT t.id, t.name, t.purpose, t.method, t.endpoint_url AS "endpointUrl", t.created_at AS "createdAt", t.updated_at AS "updatedAt",
        k.summary, k.operations, k.model_id AS "modelId", k.analyzed_at AS "analyzedAt"
        FROM tools t LEFT JOIN tool_knowledge k ON k.user_id = t.user_id AND k.tool_id = t.id
-       WHERE t.user_id = $1 ORDER BY t.updated_at DESC`,
+       WHERE admin_library_access($1,t.user_id) ORDER BY t.updated_at DESC`,
             [session.user.id],
         );
         return Response.json({ tools: result.rows });

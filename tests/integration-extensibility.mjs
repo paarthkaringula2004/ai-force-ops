@@ -4,6 +4,9 @@ import { createRequire } from "node:module";
 import ts from "typescript";
 const require = createRequire(import.meta.url);
 function load(path, deps = {}) {
+    // Keep existing isolated fixtures independent of the operator library owner.
+    const library = { adminLibrarySettingsOwner: async (actor) => actor };
+    deps = { "./admin-library": library, "../admin-library": library, "@/lib/admin-library": library, ...deps };
     const m = { exports: {} };
     new Function(
         "require",

@@ -2,8 +2,11 @@ import "../scripts/load-env.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import pg from "pg";
-import { load } from "./helpers/load-ts.mjs";
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 }),
+import { load as loadTree } from "./helpers/load-ts.mjs";
+const fixtureLibrary = { adminLibrarySettingsOwner: async (actor) => actor };
+const load = (path, deps = {}) => loadTree(path, { "./admin-library": fixtureLibrary, "../admin-library": fixtureLibrary, "@/lib/admin-library": fixtureLibrary, ...deps });
+import { postgresConnectionOptions } from "../config/postgres.mjs";
+const pool = new pg.Pool({ ...postgresConnectionOptions(), max: 1 }),
     client = await pool.connect();
 const db = {
     query: (sql, args) => client.query(sql, args),

@@ -1,3 +1,4 @@
+import { toolLibraryOwner } from "@/lib/admin-library";
 import { db } from "@/lib/db";
 import { getRequestSession } from "@/lib/request-session";
 
@@ -10,10 +11,11 @@ export async function DELETE(request: Request, context: Context) {
     if (!session?.user)
         return Response.json({ error: "Sign in to remove a tool." }, { status: 401 });
     const { toolId } = await context.params;
+    const libraryOwner = await toolLibraryOwner(session.user.id, toolId);
     if (!UUID.test(toolId)) return Response.json({ error: "Tool not found." }, { status: 404 });
     try {
         const result = await db.query(`DELETE FROM tools WHERE user_id = $1 AND id = $2`, [
-            session.user.id,
+            libraryOwner,
             toolId,
         ]);
         return result.rowCount
@@ -32,6 +34,7 @@ export async function PUT(request: Request, context: Context) {
     if (origin && origin !== new URL(request.url).origin)
         return Response.json({ error: "Invalid origin." }, { status: 403 });
     const { toolId } = await context.params;
+    const libraryOwner = await toolLibraryOwner(session.user.id, toolId);
     if (!UUID.test(toolId)) return Response.json({ error: "Tool not found." }, { status: 404 });
     try {
         const body = await request.json();
@@ -58,7 +61,7 @@ export async function PUT(request: Request, context: Context) {
             );
         const result = await db.query(
             `UPDATE tools SET name=$3,purpose=$4,method=$5,endpoint_url=$6,updated_at=now() WHERE user_id=$1 AND id=$2 RETURNING id,name,purpose,method,endpoint_url AS "endpointUrl"`,
-            [session.user.id, toolId, name, purpose, method, endpoint.toString()],
+            [libraryOwner, toolId, name, purpose, method, endpoint.toString()],
         );
         return result.rowCount
             ? Response.json({ tool: result.rows[0] })

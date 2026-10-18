@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { XMLParser } from "fast-xml-parser";
 import { db } from "../db";
+import { adminLibrarySettingsOwner } from "../admin-library";
 import { seal, unseal, InputError } from "../eassist/transport";
 import { securityPolicy } from "../eassist/security";
 import { workspaceAccess } from "../workspace-access";
@@ -172,8 +173,8 @@ export async function approveIntegration(user: string, token: string, scope: App
     if (c.revision !== pending.revision || fingerprint(c) !== pending.connection_hash)
         throw new InputError("The connection changed. Prepare a new preview.", 409);
     const consumed = await db.query(
-        `UPDATE integration_approvals SET consumed_at=now() WHERE user_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now() AND EXISTS(SELECT 1 FROM integration_connections WHERE user_id=$1 AND provider=$3 AND revision=$4 AND enabled=true) RETURNING token_hash`,
-        [user, digest, pending.provider, c.revision],
+        `UPDATE integration_approvals SET consumed_at=now() WHERE user_id=$1 AND token_hash=$2 AND consumed_at IS NULL AND expires_at>now() AND EXISTS(SELECT 1 FROM integration_connections WHERE user_id=$5 AND provider=$3 AND revision=$4 AND enabled=true) RETURNING token_hash`,
+        [user, digest, pending.provider, c.revision, await adminLibrarySettingsOwner(user)],
     );
     if (!consumed.rowCount)
         throw new InputError("Approval was already used or the connection changed.", 409);

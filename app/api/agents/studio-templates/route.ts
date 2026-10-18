@@ -75,12 +75,13 @@ export async function POST(request: Request) {
         ) {
             graph = ensureDwpTools(graph, name);
             const old = await client.query(
-                `SELECT a.id,a.model_id,w.graph FROM agents a LEFT JOIN agent_workflows w ON w.user_id=a.user_id AND w.agent_id=a.id WHERE a.user_id=$1 AND a.name=$2 AND a.deleted_at IS NULL ORDER BY a.created_at LIMIT 1`,
+                `SELECT a.id,a.user_id AS "ownerId",a.model_id,w.graph FROM agents a LEFT JOIN agent_workflows w ON w.user_id=a.user_id AND w.agent_id=a.id WHERE admin_library_access($1,a.user_id) AND a.name=$2 AND a.deleted_at IS NULL ORDER BY a.created_at LIMIT 1`,
                 [session!.user.id, name],
             );
 
             if (old.rowCount) {
                 const row = old.rows[0];
+                const resourceOwner = row.ownerId;
 
                 // Installing a starter replaces legacy sample steps once, with a recoverable backup.
 
@@ -101,7 +102,7 @@ export async function POST(request: Request) {
                     if (upgraded !== row.graph)
                         await client.query(
                             "UPDATE agent_workflows SET graph=$3::jsonb,updated_at=now() WHERE user_id=$1 AND agent_id=$2",
-                            [session!.user.id, row.id, JSON.stringify(upgraded)],
+                            [resourceOwner, row.id, JSON.stringify(upgraded)],
                         );
 
                     return { id: row.id as string, created: false };
@@ -112,7 +113,7 @@ export async function POST(request: Request) {
                 if (row.graph)
                     await client.query(
                         `INSERT INTO agent_studio_backups(id,user_id,agent_id,graph) VALUES($1,$2,$3,$4)`,
-                        [randomUUID(), session!.user.id, row.id, JSON.stringify(row.graph)],
+                        [randomUUID(), resourceOwner, row.id, JSON.stringify(row.graph)],
                     );
 
                 const modelNode = graph.nodes.find((n) => n.type === "ModelNode"),
@@ -124,7 +125,7 @@ export async function POST(request: Request) {
 
                 await client.query(
                     `INSERT INTO agent_workflows (user_id,agent_id,graph) VALUES ($1,$2,$3::jsonb) ON CONFLICT (user_id,agent_id) DO UPDATE SET graph=EXCLUDED.graph,updated_at=now()`,
-                    [session!.user.id, row.id, JSON.stringify(graph)],
+                    [resourceOwner, row.id, JSON.stringify(graph)],
                 );
 
                 return { id: row.id as string, created: false };

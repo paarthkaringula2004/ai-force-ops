@@ -2,6 +2,7 @@ import { getRequestSession } from "@/lib/request-session";
 import { saveAgentShare } from "@/lib/agent-sharing";
 import { boundedJson, InputError } from "@/lib/eassist/transport";
 import { requireSameOrigin } from "@/lib/service-review/ingestion";
+import { agentLibraryOwner } from "@/lib/admin-library";
 export const runtime = "nodejs";
 export async function POST(request: Request, context: { params: Promise<{ agentId: string }> }) {
     const session = await getRequestSession(request);
@@ -16,7 +17,7 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
             throw new InputError("Provide sharing settings.");
         const body = raw as { roles?: unknown; recipientIds?: unknown };
         return Response.json(
-            await saveAgentShare(session.user.id, agentId, body.roles, body.recipientIds),
+            await saveAgentShare(await agentLibraryOwner(session.user.id, agentId), agentId, body.roles, body.recipientIds),
         );
     } catch (error) {
         return Response.json(

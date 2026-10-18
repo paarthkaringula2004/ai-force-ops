@@ -1,3 +1,4 @@
+import { adminLibrarySettingsOwner } from "../admin-library";
 import { db } from "../db";
 import { seal, unseal, InputError, type PrivateConnection } from "../eassist/transport";
 import type { Operation } from "./catalog";
@@ -100,13 +101,15 @@ export function parseMappings(value: string): Mapping[] {
     });
 }
 export async function loadConnection(user: string, provider: string): Promise<Connection | null> {
+    const settingsOwner = await adminLibrarySettingsOwner(user);
     const row = (
         await db.query(
-            "SELECT config,secret_cipher,enabled,revision FROM integration_connections WHERE user_id=$1 AND provider=$2",
-            [user, provider],
+            "SELECT config,secret_cipher,enabled,revision,user_id FROM integration_connections WHERE admin_library_access($1,user_id) AND provider=$2 ORDER BY (user_id=$3) DESC,user_id LIMIT 1",
+            [user, provider, settingsOwner],
         )
     ).rows[0];
     if (!row) return null;
+    user = row.user_id || user;
     const result: Connection = {
         config: row.config,
         secrets: row.secret_cipher ? JSON.parse(unseal(row.secret_cipher)) : {},
@@ -136,6 +139,7 @@ export async function loadConnection(user: string, provider: string): Promise<Co
 export async function saveConnection(user: string, provider: string, value: unknown) {
     const definition = await resolveProvider(user, provider);
     if (!definition) throw new InputError("Unknown integration.", 404);
+    user = await adminLibrarySettingsOwner(user);
     if (!value || typeof value !== "object") throw new InputError("Enter connection details.");
     const body = value as Record<string, unknown>;
     const input = body.config;

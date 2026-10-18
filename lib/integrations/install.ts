@@ -18,7 +18,7 @@ export async function installIntegrationTemplate(user: string, key: string) {
         ]);
         const existing = (
             await client.query(
-                "SELECT id FROM agents WHERE user_id=$1 AND name=$2 AND deleted_at IS NULL LIMIT 1",
+                "SELECT id FROM agents WHERE admin_library_access($1,user_id) AND name=$2 AND deleted_at IS NULL ORDER BY created_at LIMIT 1",
                 [user, template.name],
             )
         ).rows[0];

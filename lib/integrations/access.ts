@@ -1,4 +1,5 @@
 import { db } from "../db";
+import { adminLibrarySettingsOwner } from "../admin-library";
 import { workspaceAccess } from "../workspace-access";
 import { InputError } from "../eassist/transport";
 import { providerById } from "./catalog";
@@ -27,7 +28,7 @@ export async function integrationAccess(user: string) {
     ).rows;
     const own = (
         await db.query(
-            "SELECT id FROM integration_definitions WHERE user_id=$1 AND definition IS NOT NULL",
+            "SELECT id FROM integration_definitions WHERE admin_library_access($1,user_id) AND definition IS NOT NULL",
             [user],
         )
     ).rows.map((r) => r.id as string);
@@ -76,6 +77,7 @@ export async function requireIntegrationCreate(user: string) {
         throw new InputError("An Admin must grant your role permission to add integrations.", 403);
 }
 export async function integrationShares(user: string) {
+    user = await adminLibrarySettingsOwner(user);
     return (
         await db.query(
             "SELECT provider,shared_roles FROM integration_role_shares WHERE user_id=$1",
@@ -112,6 +114,6 @@ export async function saveIntegrationShare(user: string, provider: string, roles
     await db.query(
         `INSERT INTO integration_role_shares(user_id,provider,shared_roles,source_owner_id) VALUES($1,$2,$3,$4)
  ON CONFLICT(user_id,provider) DO UPDATE SET shared_roles=excluded.shared_roles,source_owner_id=excluded.source_owner_id,updated_at=now()`,
-        [user, provider, [...new Set(roles)], source || null],
+        [await adminLibrarySettingsOwner(user), provider, [...new Set(roles)], source || null],
     );
 }

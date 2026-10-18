@@ -3,6 +3,7 @@ import { db } from "../db";
 import { InputError } from "../eassist/transport";
 import { listProviders } from "./registry";
 import { parseMappings } from "./store";
+import { adminLibrarySettingsOwner } from "../admin-library";
 
 export type ProjectBinding = {
     id: string;
@@ -16,7 +17,7 @@ export type ProjectBinding = {
 export async function projectBindings(user: string) {
     return (
         await db.query<ProjectBinding>(
-            "SELECT id,name,purpose,provider,operation,defaults,revision FROM project_tool_bindings WHERE user_id=$1 AND deleted_at IS NULL ORDER BY created_at",
+            "SELECT id,name,purpose,provider,operation,defaults,revision FROM project_tool_bindings WHERE admin_library_access($1,user_id) AND deleted_at IS NULL ORDER BY created_at",
             [user],
         )
     ).rows;
@@ -25,7 +26,7 @@ export async function resolveProjectBinding(user: string, id: string) {
     if (!/^[a-f\d-]{36}$/i.test(id)) throw new InputError("Invalid project tool.");
     const row = (
         await db.query<ProjectBinding>(
-            "SELECT id,name,purpose,provider,operation,defaults,revision FROM project_tool_bindings WHERE user_id=$1 AND id=$2 AND deleted_at IS NULL",
+            "SELECT id,name,purpose,provider,operation,defaults,revision FROM project_tool_bindings WHERE admin_library_access($1,user_id) AND id=$2 AND deleted_at IS NULL",
             [user, id],
         )
     ).rows[0];
@@ -33,11 +34,12 @@ export async function resolveProjectBinding(user: string, id: string) {
     return row;
 }
 export async function providerOperations(user: string) {
+    const settingsOwner = await adminLibrarySettingsOwner(user);
     const providers = await listProviders(user);
     const saved = (
         await db.query(
             "SELECT provider,config,enabled FROM integration_connections WHERE user_id=$1",
-            [user],
+            [settingsOwner],
         )
     ).rows;
     return providers.map((p) => {
@@ -80,7 +82,7 @@ export async function saveProjectBinding(user: string, value: Record<string, unk
     if (value.id) {
         const old = await resolveProjectBinding(user, String(value.id));
         await db.query(
-            "UPDATE project_tool_bindings SET name=$3,purpose=$4,provider=$5,operation=$6,defaults=$7,revision=revision+1 WHERE user_id=$1 AND id=$2",
+            "UPDATE project_tool_bindings SET name=$3,purpose=$4,provider=$5,operation=$6,defaults=$7,revision=revision+1 WHERE admin_library_access($1,user_id) AND id=$2",
             [user, old.id, name, purpose, provider, operation, JSON.stringify(defaults)],
         );
         return old.id;
@@ -88,7 +90,7 @@ export async function saveProjectBinding(user: string, value: Record<string, unk
     const id = randomUUID();
     await db.query(
         "INSERT INTO project_tool_bindings(id,user_id,name,purpose,provider,operation,defaults) VALUES($1,$2,$3,$4,$5,$6,$7)",
-        [id, user, name, purpose, provider, operation, JSON.stringify(defaults)],
+        [id, await adminLibrarySettingsOwner(user), name, purpose, provider, operation, JSON.stringify(defaults)],
     );
     return id;
 }

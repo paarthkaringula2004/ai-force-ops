@@ -1,3 +1,4 @@
+import { agentLibraryOwner } from "@/lib/admin-library";
 import { workspaceAccess } from "@/lib/workspace-access";
 import { permitted } from "@/lib/workspace-permissions";
 import { db } from "@/lib/db";
@@ -9,11 +10,12 @@ export async function GET(request: Request, context: { params: Promise<{ agentId
     if (!permitted(await workspaceAccess(session.user.id), "agent_studio"))
         return Response.json({ error: "Agent Studio access required." }, { status: 403 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!/^[0-9a-f-]{36}$/i.test(agentId))
         return Response.json({ error: "Invalid agent." }, { status: 400 });
     const result = await db.query(
         `SELECT created_at AS "createdAt" FROM agent_studio_backups WHERE user_id=$1 AND agent_id=$2 AND restored_at IS NULL ORDER BY created_at DESC LIMIT 1`,
-        [session.user.id, agentId],
+        [libraryOwner, agentId],
     );
     return Response.json({ backup: result.rows[0] || null });
 }
@@ -28,6 +30,7 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
     if (!permitted(await workspaceAccess(session.user.id), "agent_studio"))
         return Response.json({ error: "Agent Studio access required." }, { status: 403 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!/^[0-9a-f-]{36}$/i.test(agentId))
         return Response.json({ error: "Invalid agent." }, { status: 400 });
     const client = await db.connect();
@@ -35,7 +38,7 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
         await client.query("BEGIN");
         const old = await client.query(
             `SELECT id,graph FROM agent_studio_backups WHERE user_id=$1 AND agent_id=$2 AND restored_at IS NULL ORDER BY created_at DESC LIMIT 1 FOR UPDATE`,
-            [session.user.id, agentId],
+            [libraryOwner, agentId],
         );
         if (!old.rowCount) {
             await client.query("ROLLBACK");
@@ -43,7 +46,7 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
         }
         await client.query(
             `UPDATE agent_workflows SET graph=$3,updated_at=now() WHERE user_id=$1 AND agent_id=$2`,
-            [session.user.id, agentId, old.rows[0].graph],
+            [libraryOwner, agentId, old.rows[0].graph],
         );
         await client.query(`UPDATE agent_studio_backups SET restored_at=now() WHERE id=$1`, [
             old.rows[0].id,

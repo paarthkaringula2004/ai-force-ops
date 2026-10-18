@@ -1,6 +1,7 @@
 import { db } from "./db";
 import { projectTools } from "./agent-project-tools";
 import { InputError } from "./eassist/transport";
+import { adminLibrarySettingsOwner } from "./admin-library";
 
 const definitions = projectTools.filter((t) => !t.id.startsWith("integration:"));
 type Saved = {
@@ -18,6 +19,7 @@ export function builtinDefinition(id: string) {
     return definition;
 }
 export async function builtinTools(user: string, includeDeleted = false) {
+    user = await adminLibrarySettingsOwner(user);
     const rows = (
         await db.query<Saved>(
             "SELECT tool_id,name,purpose,enabled,default_request,deleted_at,revision FROM builtin_project_tool_settings WHERE user_id=$1",
@@ -119,6 +121,7 @@ export async function changeBuiltinTool(
     action: string,
     value: Record<string, unknown>,
 ) {
+    user = await adminLibrarySettingsOwner(user);
     const id = String(value.id || ""),
         definition = builtinDefinition(id);
     if (action === "save_builtin") {

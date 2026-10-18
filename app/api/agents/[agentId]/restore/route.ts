@@ -1,3 +1,4 @@
+import { agentLibraryOwner } from "@/lib/admin-library";
 import { db } from "@/lib/db";
 import { getRequestSession } from "@/lib/request-session";
 import { purgeExpiredAgentTrash } from "@/lib/agent-trash";
@@ -11,6 +12,7 @@ export async function POST(request: Request, context: Context) {
     if (!session?.user)
         return Response.json({ error: "Sign in to restore this agent." }, { status: 401 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!UUID.test(agentId))
         return Response.json({ error: "Agent not found in the Bin." }, { status: 404 });
 
@@ -21,7 +23,7 @@ export async function POST(request: Request, context: Context) {
             `UPDATE agents SET deleted_at = NULL
        WHERE user_id = $1 AND id = $2 AND deleted_at > now() - interval '30 days'
        RETURNING id`,
-            [session.user.id, agentId],
+            [libraryOwner, agentId],
         );
         if (!restored.rowCount) {
             await client.query("ROLLBACK");
@@ -37,7 +39,7 @@ export async function POST(request: Request, context: Context) {
          SELECT id FROM published_agents WHERE user_id = $1 AND agent_id = $2
          ORDER BY version DESC LIMIT 1
        )`,
-            [session.user.id, agentId],
+            [libraryOwner, agentId],
         );
         await client.query("COMMIT");
         return Response.json({ restored: true });

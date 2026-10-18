@@ -103,7 +103,7 @@ export async function loadStudioAgent(user: string, id: string) {
     if (!UUID.test(id)) throw new InputError("Invalid agent.");
 
     const result = await db.query<Agent & { graph: WorkflowGraph }>(
-        `SELECT a.id,a.name,a.purpose,a.model_id AS "modelId",a.instructions,w.graph FROM agents a LEFT JOIN agent_workflows w ON w.agent_id=a.id AND w.user_id=a.user_id WHERE a.user_id=$1 AND a.id=$2 AND a.deleted_at IS NULL`,
+        `SELECT a.id,a.name,a.purpose,a.model_id AS "modelId",a.instructions,w.graph FROM agents a LEFT JOIN agent_workflows w ON w.agent_id=a.id AND w.user_id=a.user_id WHERE admin_library_access($1,a.user_id) AND a.id=$2 AND a.deleted_at IS NULL`,
         [user, id],
     );
 
@@ -186,7 +186,7 @@ export async function readProjectTool(user: string, name: string, request = "") 
 
 async function libraryTool(user: string, node: WorkflowNode): Promise<Tool> {
     const result = await db.query<Tool>(
-        `SELECT id,name,purpose,method,endpoint_url AS url FROM tools WHERE user_id=$1 AND id=$2`,
+        `SELECT id,name,purpose,method,endpoint_url AS url FROM tools WHERE admin_library_access($1,user_id) AND id=$2`,
         [user, node.data.referenceId],
     );
 
@@ -217,7 +217,7 @@ async function executeLibraryTool(
     if (node.data.includeApiKey !== false) {
         const credential = (
             await db.query<{ encryptedValue: string }>(
-                `SELECT encrypted_value AS "encryptedValue" FROM agent_api_credentials WHERE user_id=$1 AND agent_id=$2 AND node_id=$3`,
+                `SELECT encrypted_value AS "encryptedValue" FROM agent_api_credentials WHERE admin_library_access($1,user_id) AND agent_id=$2 AND node_id=$3`,
                 [user, agentId, node.id],
             )
         ).rows[0];
@@ -342,11 +342,11 @@ export async function approveStudioTool(user: string, agentId: string, token: st
 
     const consumed = directApi
         ? await db.query(
-              `UPDATE agent_tool_approvals SET consumed_at=now() WHERE user_id=$1 AND agent_id=$2 AND token_hash=$3 AND consumed_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM agent_workflows w WHERE w.user_id=$1 AND w.agent_id=$2 AND w.graph=$4::jsonb) RETURNING id`,
+              `UPDATE agent_tool_approvals SET consumed_at=now() WHERE user_id=$1 AND agent_id=$2 AND token_hash=$3 AND consumed_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM agent_workflows w WHERE admin_library_access($1,w.user_id) AND w.agent_id=$2 AND w.graph=$4::jsonb) RETURNING id`,
               [user, agentId, hash(token), JSON.stringify(graph)],
           )
         : await db.query(
-              `UPDATE agent_tool_approvals SET consumed_at=now() WHERE user_id=$1 AND agent_id=$2 AND token_hash=$3 AND consumed_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM agent_workflows w WHERE w.user_id=$1 AND w.agent_id=$2 AND w.graph=$4::jsonb) AND EXISTS (SELECT 1 FROM tools t WHERE t.user_id=$1 AND t.id=$5 AND t.name=$6 AND t.purpose=$7 AND t.method=$8 AND t.endpoint_url=$9) RETURNING id`,
+              `UPDATE agent_tool_approvals SET consumed_at=now() WHERE user_id=$1 AND agent_id=$2 AND token_hash=$3 AND consumed_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM agent_workflows w WHERE admin_library_access($1,w.user_id) AND w.agent_id=$2 AND w.graph=$4::jsonb) AND EXISTS (SELECT 1 FROM tools t WHERE admin_library_access($1,t.user_id) AND t.id=$5 AND t.name=$6 AND t.purpose=$7 AND t.method=$8 AND t.endpoint_url=$9) RETURNING id`,
               [
                   user,
                   agentId,
@@ -400,7 +400,7 @@ export async function resumeStudioFlow(
     const next = node && flowEdges(graph, node.id).find((e) => e.sourceHandle === decision)?.target;
     if (!next) throw new InputError("This approval branch is no longer connected.", 409);
     const consumed = await db.query(
-        `UPDATE agent_tool_approvals SET consumed_at=now() WHERE user_id=$1 AND agent_id=$2 AND token_hash=$3 AND consumed_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM agent_workflows w WHERE w.user_id=$1 AND w.agent_id=$2 AND w.graph=$4::jsonb) RETURNING id`,
+        `UPDATE agent_tool_approvals SET consumed_at=now() WHERE user_id=$1 AND agent_id=$2 AND token_hash=$3 AND consumed_at IS NULL AND expires_at>now() AND EXISTS (SELECT 1 FROM agent_workflows w WHERE admin_library_access($1,w.user_id) AND w.agent_id=$2 AND w.graph=$4::jsonb) RETURNING id`,
         [user, agentId, hash(token), JSON.stringify(graph)],
     );
     if (!consumed.rowCount) throw new InputError("This approval was already used or expired.", 409);

@@ -205,6 +205,7 @@ export function invalidateWorkspaceApiData(section?: string) {
     for (const key of cache.keys()) {
         if (paths.some((path) => key.startsWith(`${cacheUserId}:${path}`))) cache.delete(key);
     }
+    window.dispatchEvent(new CustomEvent("workspace-library-updated", { detail: { section } }));
 }
 
 export function clearWorkspaceApiData() {

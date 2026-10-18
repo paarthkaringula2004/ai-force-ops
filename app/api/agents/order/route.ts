@@ -28,7 +28,7 @@ export async function PUT(request: Request) {
             `agent-order:${session.user.id}`,
         ]);
         const owned = await client.query<{ id: string }>(
-            "SELECT id FROM agents WHERE user_id=$1 AND deleted_at IS NULL FOR UPDATE",
+            "SELECT id FROM agents WHERE admin_library_access($1,user_id) AND deleted_at IS NULL FOR UPDATE",
             [session.user.id],
         );
         if (

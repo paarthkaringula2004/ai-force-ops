@@ -47,7 +47,7 @@ export async function GET(request: Request) {
                 removed: canManage
                     ? (
                           await db.query(
-                              "SELECT id,name FROM project_tool_bindings WHERE user_id=$1 AND deleted_at IS NOT NULL ORDER BY name",
+                              "SELECT id,name FROM project_tool_bindings WHERE admin_library_access($1,user_id) AND deleted_at IS NOT NULL ORDER BY name",
                               [session.user.id],
                           )
                       ).rows
@@ -77,7 +77,7 @@ export async function POST(request: Request) {
             if (typeof b.id !== "string" || !/^[a-f\d-]{36}$/i.test(b.id))
                 throw new InputError("Choose a project tool.");
             const result = await db.query(
-                `UPDATE project_tool_bindings SET deleted_at=${b.action === "delete" ? "now()" : "NULL"},revision=revision+1 WHERE user_id=$1 AND id=$2 RETURNING id`,
+                `UPDATE project_tool_bindings SET deleted_at=${b.action === "delete" ? "now()" : "NULL"},revision=revision+1 WHERE admin_library_access($1,user_id) AND id=$2 RETURNING id`,
                 [session.user.id, b.id],
             );
             if (!result.rowCount) throw new InputError("Project tool not found.", 404);

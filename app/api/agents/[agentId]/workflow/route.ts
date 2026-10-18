@@ -1,3 +1,4 @@
+import { agentLibraryOwner } from "@/lib/admin-library";
 import { db } from "@/lib/db";
 import { encryptAgentApiKey } from "@/lib/agent-secrets";
 import { getRequestSession } from "@/lib/request-session";
@@ -20,17 +21,18 @@ export async function GET(request: Request, context: RouteContext) {
     if (!session?.user)
         return Response.json({ error: "Sign in to view this workflow." }, { status: 401 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!UUID.test(agentId)) return Response.json({ error: "Agent not found." }, { status: 404 });
 
     try {
         const [result, secrets] = await Promise.all([
             db.query<{ graph: WorkflowGraph }>(
                 `SELECT graph FROM agent_workflows WHERE user_id = $1 AND agent_id = $2`,
-                [session.user.id, agentId],
+                [libraryOwner, agentId],
             ),
             db.query<{ nodeId: string }>(
                 `SELECT node_id AS "nodeId" FROM agent_api_credentials WHERE user_id=$1 AND agent_id=$2`,
-                [session.user.id, agentId],
+                [libraryOwner, agentId],
             ),
         ]);
         if (!result.rows[0]?.graph) return Response.json({ graph: null });
@@ -67,6 +69,7 @@ export async function PUT(request: Request, context: RouteContext) {
     if (!session?.user)
         return Response.json({ error: "Sign in to save this workflow." }, { status: 401 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!UUID.test(agentId)) return Response.json({ error: "Agent not found." }, { status: 404 });
     const contentLength = Number(request.headers.get("content-length") ?? 0);
     if (contentLength > 2_000_000)
@@ -125,7 +128,7 @@ export async function PUT(request: Request, context: RouteContext) {
        SELECT $1, id, $3::jsonb, now() FROM agents WHERE user_id = $1 AND id = $2
        ON CONFLICT (user_id, agent_id) DO UPDATE SET graph = EXCLUDED.graph, updated_at = now()
        RETURNING updated_at AS "updatedAt"`,
-                [session.user.id, agentId, JSON.stringify(safeGraph)],
+                [libraryOwner, agentId, JSON.stringify(safeGraph)],
             );
             if (!result.rowCount) {
                 await client.query("ROLLBACK");
@@ -135,13 +138,13 @@ export async function PUT(request: Request, context: RouteContext) {
                 await client.query(
                     `INSERT INTO agent_api_credentials (user_id,agent_id,node_id,encrypted_value,updated_at) VALUES ($1,$2,$3,$4,now())
            ON CONFLICT (user_id,agent_id,node_id) DO UPDATE SET encrypted_value=EXCLUDED.encrypted_value,updated_at=now()`,
-                    [session.user.id, agentId, credential.nodeId, credential.encryptedValue],
+                    [libraryOwner, agentId, credential.nodeId, credential.encryptedValue],
                 );
             }
             if (clearedKeys.length)
                 await client.query(
                     `DELETE FROM agent_api_credentials WHERE user_id=$1 AND agent_id=$2 AND node_id=ANY($3::text[])`,
-                    [session.user.id, agentId, clearedKeys],
+                    [libraryOwner, agentId, clearedKeys],
                 );
             await client.query("COMMIT");
             return Response.json({ saved: true });

@@ -130,7 +130,14 @@ function ToolLibraryView() {
             .finally(() => {
                 if (!controller.signal.aborted) setLoading(false);
             });
-        return () => controller.abort();
+        const refreshLibrary = (event: Event) => {
+            if ((event as CustomEvent<{ section: string }>).detail?.section === "Tool Library") void load();
+        };
+        window.addEventListener("workspace-library-updated", refreshLibrary);
+        return () => {
+            controller.abort();
+            window.removeEventListener("workspace-library-updated", refreshLibrary);
+        };
     }, []);
     async function addTool(event: FormEvent) {
         event.preventDefault();
@@ -453,7 +460,15 @@ function KnowledgeView() {
             .finally(() => {
                 if (!controller.signal.aborted) setLoading(false);
             });
-        return () => controller.abort();
+        const refreshLibrary = (event: Event) => {
+            const section = (event as CustomEvent<{ section: string }>).detail?.section;
+            if (section === "Tool Library" || section === "Knowledge Management") void load();
+        };
+        window.addEventListener("workspace-library-updated", refreshLibrary);
+        return () => {
+            controller.abort();
+            window.removeEventListener("workspace-library-updated", refreshLibrary);
+        };
     }, []);
     async function analyze(id: string) {
         setBusy(id);

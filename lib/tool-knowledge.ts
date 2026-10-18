@@ -1,4 +1,5 @@
 import { db } from "@/lib/db";
+import { adminLibrarySettingsOwner } from "@/lib/admin-library";
 import { builtinTools } from "@/lib/builtin-project-tool-settings";
 import { listProviders } from "@/lib/integrations/registry";
 import { projectBindings, providerOperations } from "@/lib/integrations/project-tools";
@@ -31,16 +32,17 @@ export async function readToolKnowledge(user: string, admin: boolean) {
             : "NULL — Please enable this project tool to add meaningful data.",
     }));
     if (admin) {
+        const libraryOwner = await adminLibrarySettingsOwner(user);
         const [providers, operations, bindings, connections, existing] = await Promise.all([
             listProviders(user),
             providerOperations(user),
             projectBindings(user),
             db.query(
                 "SELECT provider,enabled,config->>'reuseId' AS reuse_id,check_state,checked_at FROM integration_connections WHERE user_id=$1",
-                [user],
+                [libraryOwner],
             ),
             db.query("SELECT id FROM eassist_connections WHERE user_id=$1 AND enabled=true", [
-                user,
+                libraryOwner,
             ]),
         ]);
         const configured = (id: string) => {

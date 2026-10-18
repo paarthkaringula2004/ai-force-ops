@@ -118,7 +118,7 @@ export async function saveAgentShare(
                 throw new InputError("Too many connected agents to share.");
             const row = (
                 await client.query(
-                    'SELECT a.id,a.name,a.purpose,a.model_id AS "modelId",a.instructions,w.graph FROM agents a JOIN agent_workflows w ON w.user_id=a.user_id AND w.agent_id=a.id WHERE a.user_id=$1 AND a.id=$2 AND a.deleted_at IS NULL',
+                    'SELECT a.id,a.name,a.purpose,a.model_id AS "modelId",a.instructions,w.graph FROM agents a JOIN agent_workflows w ON w.user_id=a.user_id AND w.agent_id=a.id WHERE admin_library_access($1,a.user_id) AND a.id=$2 AND a.deleted_at IS NULL',
                     [owner, id],
                 )
             ).rows[0];
@@ -212,7 +212,7 @@ export async function listAgentShares(viewer: string) {
     const own = canShare
         ? (
               await db.query(
-                  `SELECT agent_id AS id,share_id AS "shareId",roles,version,sharing_mode AS "sharingMode",ARRAY(SELECT r.user_id FROM agent_share_recipients r WHERE r.share_id=s.share_id ORDER BY r.user_id) AS "recipientIds" FROM agent_role_shares s WHERE owner_id=$1`,
+                  `SELECT agent_id AS id,share_id AS "shareId",roles,version,sharing_mode AS "sharingMode",ARRAY(SELECT r.user_id FROM agent_share_recipients r WHERE r.share_id=s.share_id ORDER BY r.user_id) AS "recipientIds" FROM agent_role_shares s WHERE admin_library_access($1,owner_id)`,
                   [viewer],
               )
           ).rows

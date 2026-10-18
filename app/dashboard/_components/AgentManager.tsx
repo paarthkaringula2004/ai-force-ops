@@ -535,8 +535,15 @@ export default function AgentManager() {
         }
 
         void loadAgents();
-
-        return () => controller.abort();
+        const refreshLibrary = (event: Event) => {
+            if ((event as CustomEvent<{ section: string }>).detail?.section === "Agents")
+                void loadAgents();
+        };
+        window.addEventListener("workspace-library-updated", refreshLibrary);
+        return () => {
+            controller.abort();
+            window.removeEventListener("workspace-library-updated", refreshLibrary);
+        };
     }, []);
 
     const filteredAgents = useMemo(() => {

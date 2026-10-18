@@ -25,10 +25,10 @@ export async function GET(request: Request) {
             `SELECT
         (SELECT GREATEST(MAX(created_at), (SELECT updated_at FROM playground_settings WHERE user_id = $1))
          FROM playground_messages WHERE user_id = $1) AS playground,
-        (SELECT MAX(GREATEST(updated_at, COALESCE(deleted_at, updated_at))) FROM agents WHERE user_id = $1) AS agents,
-        (SELECT GREATEST((SELECT MAX(updated_at) FROM tools WHERE user_id = $1), (SELECT MAX(analyzed_at) FROM tool_knowledge WHERE user_id = $1))::timestamptz) AS tools,
-        (SELECT MAX(analyzed_at) FROM tool_knowledge WHERE user_id = $1) AS knowledge,
-        (SELECT MAX(updated_at) FROM agents WHERE user_id = $1 AND instructions <> '') AS instructions,
+        (SELECT MAX(GREATEST(updated_at, COALESCE(deleted_at, updated_at))) FROM agents WHERE admin_library_access($1,user_id)) AS agents,
+        (SELECT GREATEST((SELECT MAX(updated_at) FROM tools WHERE admin_library_access($1,user_id)), (SELECT MAX(analyzed_at) FROM tool_knowledge WHERE admin_library_access($1,user_id)))::timestamptz) AS tools,
+        (SELECT MAX(analyzed_at) FROM tool_knowledge WHERE admin_library_access($1,user_id)) AS knowledge,
+        (SELECT MAX(updated_at) FROM agents WHERE admin_library_access($1,user_id) AND instructions <> '') AS instructions,
         (SELECT MAX(created_at) FROM usage_events WHERE user_id = $1) AS models,
         (SELECT GREATEST((SELECT updated_at FROM account_profiles WHERE user_id = $1), (SELECT "updatedAt" FROM "user" WHERE id = $1))::timestamptz) AS settings,
         (SELECT MAX(created_at) FROM usage_events WHERE user_id = $1) AS usage,

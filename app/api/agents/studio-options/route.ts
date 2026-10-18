@@ -28,7 +28,7 @@ export async function GET(request: Request) {
         return Response.json({
             items: (
                 await db.query(
-                    `SELECT id,name,purpose,'agent' AS "referenceKind" FROM agents WHERE user_id=$1 AND deleted_at IS NULL ORDER BY name`,
+                    `SELECT id,name,purpose,'agent' AS "referenceKind" FROM agents WHERE admin_library_access($1,user_id) AND deleted_at IS NULL ORDER BY name`,
                     [session.user.id],
                 )
             ).rows,
@@ -83,7 +83,7 @@ export async function GET(request: Request) {
                     ...custom,
                     ...(
                         await db.query(
-                            `SELECT id,name,purpose,method,endpoint_url AS "endpointUrl",'tool' AS "referenceKind" FROM tools WHERE user_id=$1 ORDER BY name`,
+                            `SELECT id,name,purpose,method,endpoint_url AS "endpointUrl",'tool' AS "referenceKind" FROM tools WHERE admin_library_access($1,user_id) ORDER BY name`,
                             [session.user.id],
                         )
                     ).rows,

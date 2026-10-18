@@ -15,17 +15,17 @@ export async function DELETE(request: Request) {
             `SELECT release.public_id AS "publicId"
        FROM published_agents AS release
        JOIN agents AS agent ON agent.user_id = release.user_id AND agent.id = release.agent_id
-       WHERE agent.user_id = $1 AND agent.deleted_at IS NOT NULL`,
+       WHERE admin_library_access($1,agent.user_id) AND agent.deleted_at IS NOT NULL`,
             [session.user.id],
         );
         if (releases.rows.length) {
             await client.query(
-                "DELETE FROM published_conversations WHERE user_id = $1 AND public_id = ANY($2::uuid[])",
+                "DELETE FROM published_conversations WHERE admin_library_access($1,user_id) AND public_id = ANY($2::uuid[])",
                 [session.user.id, releases.rows.map((release) => release.publicId)],
             );
         }
         const deleted = await client.query(
-            "DELETE FROM agents WHERE user_id = $1 AND deleted_at IS NOT NULL RETURNING id",
+            "DELETE FROM agents WHERE admin_library_access($1,user_id) AND deleted_at IS NOT NULL RETURNING id",
             [session.user.id],
         );
         await client.query("COMMIT");

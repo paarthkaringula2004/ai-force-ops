@@ -1,5 +1,6 @@
 import { requireIntegrationAccess } from "./access";
 import { db } from "../db";
+import { adminLibrarySettingsOwner } from "../admin-library";
 import { InputError, seal, unseal } from "../eassist/transport";
 import { integrationCapabilities, prepareIntegration } from "./runtime";
 
@@ -28,7 +29,7 @@ export async function configureMonitor(
     await db.query(
         `INSERT INTO integration_monitors(user_id,provider,operation,inputs_cipher,enabled,interval_seconds) VALUES($1,$2,$3,$4,$5,$6)
  ON CONFLICT(user_id,provider) DO UPDATE SET operation=EXCLUDED.operation,inputs_cipher=EXCLUDED.inputs_cipher,enabled=EXCLUDED.enabled,interval_seconds=EXCLUDED.interval_seconds,next_run_at=now(),lease_until=NULL,result_cipher=NULL,last_status='not_checked'`,
-        [user, provider, operation, seal(JSON.stringify(inputs)), enabled, interval],
+        [await adminLibrarySettingsOwner(user), provider, operation, seal(JSON.stringify(inputs)), enabled, interval],
     );
 }
 export async function maintainIntegrationMonitors() {
@@ -81,7 +82,7 @@ export async function monitorSnapshot(user: string, provider: string) {
     const row = (
         await db.query(
             "SELECT operation,enabled,interval_seconds,last_status,last_checked_at,result_cipher FROM integration_monitors WHERE user_id=$1 AND provider=$2",
-            [user, provider],
+            [await adminLibrarySettingsOwner(user), provider],
         )
     ).rows[0];
     if (!row) return { configured: false };

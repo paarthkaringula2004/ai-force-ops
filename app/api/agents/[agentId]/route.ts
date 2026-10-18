@@ -1,3 +1,4 @@
+import { agentLibraryOwner } from "@/lib/admin-library";
 import { db } from "@/lib/db";
 import { getRequestSession } from "@/lib/request-session";
 
@@ -11,13 +12,14 @@ export async function GET(request: Request, context: RouteContext) {
     if (!session?.user)
         return Response.json({ error: "Sign in to view this agent." }, { status: 401 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!UUID.test(agentId)) return Response.json({ error: "Agent not found." }, { status: 404 });
 
     try {
         const result = await db.query(
             `SELECT id, name, purpose, model_id AS "modelId", instructions, created_at AS "createdAt", updated_at AS "updatedAt"
        FROM agents WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL`,
-            [session.user.id, agentId],
+            [libraryOwner, agentId],
         );
         return result.rowCount
             ? Response.json({ agent: result.rows[0] })
@@ -35,6 +37,7 @@ export async function PATCH(request: Request, context: RouteContext) {
     if (!session?.user)
         return Response.json({ error: "Sign in to update this agent." }, { status: 401 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!UUID.test(agentId)) return Response.json({ error: "Agent not found." }, { status: 404 });
 
     try {
@@ -62,7 +65,7 @@ export async function PATCH(request: Request, context: RouteContext) {
             `UPDATE agents SET name = $3, purpose = $4, model_id = $5, instructions = $6, updated_at = now()
        WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL
        RETURNING id, name, purpose, model_id AS "modelId", instructions, created_at AS "createdAt", updated_at AS "updatedAt"`,
-            [session.user.id, agentId, name, purpose, modelId, instructions],
+            [libraryOwner, agentId, name, purpose, modelId, instructions],
         );
         return result.rowCount
             ? Response.json({ agent: result.rows[0] })
@@ -80,6 +83,7 @@ export async function DELETE(request: Request, context: RouteContext) {
     if (!session?.user)
         return Response.json({ error: "Sign in to delete this agent." }, { status: 401 });
     const { agentId } = await context.params;
+    const libraryOwner = await agentLibraryOwner(session.user.id, agentId);
     if (!UUID.test(agentId)) return Response.json({ error: "Agent not found." }, { status: 404 });
     const permanently = new URL(request.url).searchParams.get("permanent") === "true";
 
@@ -88,18 +92,18 @@ export async function DELETE(request: Request, context: RouteContext) {
         await client.query("BEGIN");
         const releases = await client.query<{ publicId: string }>(
             'SELECT public_id AS "publicId" FROM published_agents WHERE user_id = $1 AND agent_id = $2',
-            [session.user.id, agentId],
+            [libraryOwner, agentId],
         );
         if (permanently && releases.rows.length) {
             await client.query(
                 "DELETE FROM published_conversations WHERE user_id = $1 AND public_id = ANY($2::uuid[])",
-                [session.user.id, releases.rows.map((release) => release.publicId)],
+                [libraryOwner, releases.rows.map((release) => release.publicId)],
             );
         }
         if (permanently) {
             const result = await client.query(
                 "DELETE FROM agents WHERE user_id = $1 AND id = $2 AND deleted_at IS NOT NULL",
-                [session.user.id, agentId],
+                [libraryOwner, agentId],
             );
             if (!result.rowCount) {
                 await client.query("ROLLBACK");
@@ -111,7 +115,7 @@ export async function DELETE(request: Request, context: RouteContext) {
 
         const result = await client.query<{ deletedAt: Date }>(
             'UPDATE agents SET deleted_at = now() WHERE user_id = $1 AND id = $2 AND deleted_at IS NULL RETURNING deleted_at AS "deletedAt"',
-            [session.user.id, agentId],
+            [libraryOwner, agentId],
         );
         if (!result.rowCount) {
             await client.query("ROLLBACK");
@@ -119,7 +123,7 @@ export async function DELETE(request: Request, context: RouteContext) {
         }
         await client.query(
             "UPDATE published_agents SET active = false WHERE user_id = $1 AND agent_id = $2 AND active",
-            [session.user.id, agentId],
+            [libraryOwner, agentId],
         );
         await client.query("COMMIT");
         const deletedAt = result.rows[0].deletedAt;

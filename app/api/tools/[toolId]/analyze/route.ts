@@ -1,3 +1,4 @@
+import { toolLibraryOwner } from "@/lib/admin-library";
 import { tokenDetails } from "@/lib/model-pricing";
 import { recordModelUsage } from "@/lib/model-usage";
 import { startPlatformRun, finishPlatformRun } from "@/lib/eassist/platform";
@@ -15,6 +16,7 @@ export async function POST(request: Request, context: Context) {
     if (!session?.user)
         return Response.json({ error: "Sign in to analyze this tool." }, { status: 401 });
     const { toolId } = await context.params;
+    const libraryOwner = await toolLibraryOwner(session.user.id, toolId);
     if (!UUID.test(toolId)) return Response.json({ error: "Tool not found." }, { status: 404 });
     const blocked = await protectOpenAiRequest(request);
     if (blocked) return blocked;
@@ -53,7 +55,7 @@ export async function POST(request: Request, context: Context) {
             purpose: string;
             method: string;
         }>(`SELECT id, name, purpose, method FROM tools WHERE user_id = $1 AND id = $2`, [
-            session.user.id,
+            libraryOwner,
             toolId,
         ]);
         const tool = result.rows[0];
@@ -95,7 +97,7 @@ export async function POST(request: Request, context: Context) {
             `INSERT INTO tool_knowledge (user_id, tool_id, summary, operations, model_id, analyzed_at) VALUES ($1,$2,$3,$4::jsonb,$5,now())
        ON CONFLICT (user_id, tool_id) DO UPDATE SET summary=EXCLUDED.summary, operations=EXCLUDED.operations, model_id=EXCLUDED.model_id, analyzed_at=now()
        RETURNING summary, operations, model_id AS "modelId", analyzed_at AS "analyzedAt"`,
-            [session.user.id, toolId, summary, JSON.stringify(operations), model],
+            [libraryOwner, toolId, summary, JSON.stringify(operations), model],
         );
         if (response.usage)
             await recordModelUsage(session.user.id, "tool-analysis", {

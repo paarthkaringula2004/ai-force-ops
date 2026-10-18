@@ -447,7 +447,7 @@ export async function employeeReply(
                 `UPDATE agent_tool_approvals SET consumed_at=now()
                  WHERE id=$1 AND user_id=$2 AND agent_id=$3 AND consumed_at IS NULL
                    AND expires_at>now() AND EXISTS (
-                       SELECT 1 FROM agent_workflows WHERE user_id=$2 AND agent_id=$3 AND graph=$4::jsonb
+                       SELECT 1 FROM agent_workflows WHERE admin_library_access($2,user_id) AND agent_id=$3 AND graph=$4::jsonb
                    ) RETURNING id`,
                 [confirmedDraft.approvalId, user, confirmedDraft.agentId, JSON.stringify(confirmedDraft.graph)],
             );

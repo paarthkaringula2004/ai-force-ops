@@ -1,3 +1,4 @@
+import { adminLibrarySettingsOwner } from "../admin-library";
 import { randomUUID } from "node:crypto";
 import { db } from "../db";
 import { InputError } from "../eassist/transport";
@@ -6,10 +7,11 @@ import { integrationCatalog, providerById, type Provider } from "./catalog";
 import { integrationAccess } from "./access";
 
 export async function listProviders(user: string, includeDeleted = false): Promise<Provider[]> {
+    const settingsOwner = await adminLibrarySettingsOwner(user);
     const rows = (
         await db.query(
-            "SELECT id,definition,deleted_at FROM integration_definitions WHERE user_id=$1",
-            [user],
+            "SELECT id,definition,deleted_at FROM integration_definitions WHERE admin_library_access($1,user_id) ORDER BY (user_id=$2),created_at,user_id",
+            [user, settingsOwner],
         )
     ).rows;
     const overrides = new Map(rows.map((r) => [r.id, r]));
@@ -29,7 +31,7 @@ export async function listProviders(user: string, includeDeleted = false): Promi
                 (!access.admin && access.grants.some((g) => g.provider === p.id)),
         ),
         ...rows
-            .filter((r) => r.definition && (includeDeleted || !r.deleted_at))
+            .filter((r) => r.definition && (includeDeleted || !overrides.get(r.id)?.deleted_at))
             .map((r) => r.definition as Provider),
         ...shared,
     ].filter(
@@ -43,6 +45,7 @@ export async function resolveProvider(user: string, id: string): Promise<Provide
     return (await listProviders(user)).find((p) => p.id === id);
 }
 export async function createProvider(user: string, value: Record<string, unknown>) {
+    user = await adminLibrarySettingsOwner(user);
     const name = typeof value.name === "string" ? value.name.trim() : "",
         description = typeof value.description === "string" ? value.description.trim() : "",
         category = typeof value.category === "string" ? value.category.trim() : "Custom";
@@ -120,6 +123,7 @@ export async function archiveProvider(user: string, id: string, restore = false)
         );
     const p = (await listProviders(user, true)).find((p) => p.id === id);
     if (!p) throw new InputError("Integration not found.", 404);
+    user = await adminLibrarySettingsOwner(user);
     const client = await db.connect();
     try {
         await client.query("BEGIN");

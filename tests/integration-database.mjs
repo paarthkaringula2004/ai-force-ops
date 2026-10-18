@@ -1,14 +1,13 @@
-import "dotenv/config";
+import "../scripts/load-env.mjs";
 import assert from "node:assert/strict";
-import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import pg from "pg";
-import ts from "typescript";
-const require = createRequire(import.meta.url);
-import { load } from "./helpers/load-ts.mjs";
+import { load as loadTree } from "./helpers/load-ts.mjs";
+const fixtureLibrary = { adminLibrarySettingsOwner: async (actor) => actor };
+const load = (path, deps = {}) => loadTree(path, { "./admin-library": fixtureLibrary, "../admin-library": fixtureLibrary, "@/lib/admin-library": fixtureLibrary, ...deps });
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 const pool = new pg.Pool({
-        connectionString: process.env.DATABASE_URL,
+        ...postgresConnectionOptions(),
         max: 1,
         connectionTimeoutMillis: 10000,
     }),
