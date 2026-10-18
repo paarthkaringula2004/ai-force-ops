@@ -25,6 +25,8 @@ services:
             sync: false
           - key: EASSIST_WORKER_TOKEN
             sync: false
+          - key: PROMETHEUS_METRICS_TOKEN
+            sync: false
           - key: MAIL_WORKER_TOKEN
             sync: false
           - key: RENDER_RUN_MIGRATIONS

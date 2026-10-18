@@ -1,4 +1,8 @@
 import { db } from "@/lib/db";
+import { validMetricsToken } from "@/lib/metrics-auth";
+import { getRequestSession } from "@/lib/request-session";
+import { workspaceAccess } from "@/lib/workspace-access";
+import { permitted } from "@/lib/workspace-permissions";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 const components = [
@@ -10,7 +14,20 @@ const components = [
     "semaphore",
     "review-center",
 ];
-export async function GET() {
+export async function GET(request: Request) {
+    // Check here as well as in the proxy so direct route invocation stays private.
+    if (!validMetricsToken(request)) {
+        const session = await getRequestSession(request);
+        if (!session?.user)
+            return Response.json({ error: "Monitoring authentication required." }, {
+                status: 401,
+                headers: { "Cache-Control": "no-store", "WWW-Authenticate": "Bearer" },
+            });
+        if (!permitted(await workspaceAccess(session.user.id), "admin"))
+            return Response.json({ error: "Admin access required." }, {
+                status: 403, headers: { "Cache-Control": "no-store" },
+            });
+    }
     let database = 0;
     const metrics = [
         "# HELP eassist_app_up Whether the HTTP application is responding.",

@@ -4,8 +4,11 @@ import { workspaceAccess } from "@/lib/workspace-access";
 import { permitted, requiredPermission } from "@/lib/workspace-permissions";
 import { organizationGuard } from "@/lib/organization-security";
 import { organizationEvent } from "@/lib/organization";
+import { validMetricsToken } from "@/lib/metrics-auth";
 export async function proxy(request: NextRequest) {
     const path = request.nextUrl.pathname;
+    if (path === "/api/metrics" && request.method === "GET" && validMetricsToken(request))
+        return NextResponse.next();
     // These endpoints validate their own worker/webhook/collector credentials.
     if (
         [
