@@ -1,12 +1,13 @@
 import "./load-env.mjs";
 import pg from "pg";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 import { getMigrations } from "better-auth/db/migration";
 import { emailOTP } from "better-auth/plugins";
 
 if (!process.env.DATABASE_URL)
     throw new Error("DATABASE_URL is required for authentication migrations.");
 const pool = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
+    ...postgresConnectionOptions(),
     max: 2,
     connectionTimeoutMillis: 10000,
 });

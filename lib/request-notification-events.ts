@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 
 // One LISTEN connection per application process, shared by all browser streams.
 type Listener = () => void;
@@ -27,7 +28,7 @@ async function connect() {
     if (state.connecting) return state.connecting;
     state.connecting = (async () => {
         const client = new Client({
-            connectionString: process.env.DATABASE_URL,
+            ...postgresConnectionOptions(),
             application_name: "aiforce-request-notifications",
             connectionTimeoutMillis: 10000,
             keepAlive: true,

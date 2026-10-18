@@ -11,10 +11,14 @@ export async function organizationAlertData(viewer: string) {
     if (!permitted(await workspaceAccess(viewer), "admin"))
         throw new InputError("Admin access required.", 403);
     const [alerts, external, accounts] = await Promise.all([
-        db.query(`SELECT a.*,h.note AS resolution_note,h.actor_name AS status_actor,h.created_at AS status_recorded_at,u.name AS account_name,u.email AS account_email,m.role AS account_role,
+        db.query(`SELECT a.*,COALESCE(connection.name,finding.facts->>'url','') AS resource_name,
+ COALESCE((SELECT array_agg(o.occurred_at ORDER BY o.occurred_at DESC) FROM platform_alert_occurrences o WHERE o.alert_id=a.id),ARRAY[a.created_at]) AS occurrence_times,h.note AS resolution_note,h.actor_name AS status_actor,h.created_at AS status_recorded_at,u.name AS account_name,u.email AS account_email,m.role AS account_role,
  CASE WHEN m.role='admin' THEN m.admin_id WHEN m.role IN ('employee','manager') THEN NULLIF(m.employee_id,'') ELSE u.id END AS account_id,
  CASE WHEN a.source='organization' THEN a.affected_user_id ELSE COALESCE(a.affected_user_id,a.user_id) END AS account_user_id
- FROM platform_alerts a LEFT JOIN "user" u ON u.id=CASE WHEN a.source='organization' THEN a.affected_user_id ELSE COALESCE(a.affected_user_id,a.user_id) END
+ FROM platform_alerts a
+ LEFT JOIN eassist_connections connection ON a.event_key='connection:'||connection.id::text
+ LEFT JOIN vulnerability_findings finding ON a.event_key='vulnerability:'||finding.id::text
+ LEFT JOIN "user" u ON u.id=CASE WHEN a.source='organization' THEN a.affected_user_id ELSE COALESCE(a.affected_user_id,a.user_id) END
  LEFT JOIN workspace_members m ON m.user_id=u.id LEFT JOIN LATERAL (SELECT x.note,x.created_at,actor.name AS actor_name FROM platform_alert_status_history x LEFT JOIN "user" actor ON actor.id=x.actor_id WHERE x.alert_id=a.id ORDER BY x.created_at DESC,x.id DESC LIMIT 1) h ON true ORDER BY a.updated_at DESC,a.id`),
         db.query(`SELECT r.*,u.name AS account_name,u.email AS account_email,m.role AS account_role,
  CASE WHEN m.role='admin' THEN m.admin_id WHEN m.role IN ('employee','manager') THEN NULLIF(m.employee_id,'') ELSE u.id END AS account_id,r.user_id AS account_user_id

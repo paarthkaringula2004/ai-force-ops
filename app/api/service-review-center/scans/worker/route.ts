@@ -5,6 +5,7 @@ import { boundedJson } from "@/lib/epace/runtime";
 import { PaceError } from "@/lib/epace/store";
 import { fields, type Facts, type Finding } from "@/lib/vulnerabilities/schema";
 import { saveReport } from "@/lib/vulnerabilities/store";
+import { continuousScanSeconds, maintainScanStorage } from "@/lib/vulnerabilities/storage";
 import {
     expireScans,
     isUuid,
@@ -38,6 +39,7 @@ export async function POST(request: Request) {
             )
                 throw new PaceError("Report scanner availability.");
             await ensureOrganizationMonitoring();
+            await maintainScanStorage();
             await db.query(
                 "INSERT INTO security_scan_worker(id,checked_at,capabilities) VALUES(1,now(),$1::jsonb) ON CONFLICT(id) DO UPDATE SET checked_at=now(),capabilities=excluded.capabilities",
                 [JSON.stringify({ zap: capabilities.zap, trivy: capabilities.trivy })],
@@ -59,8 +61,8 @@ export async function POST(request: Request) {
                         [schedule.user_id, randomUUID(), target, schedule.frequency],
                     );
                     await c.query(
-                        "UPDATE security_scan_schedules SET next_run_at=now()+CASE WHEN frequency='continuous' THEN interval '0 seconds' WHEN frequency='manual' THEN interval '100 years' WHEN frequency='daily' THEN interval '1 day' ELSE interval '7 days' END WHERE user_id=$1",
-                        [schedule.user_id],
+                        "UPDATE security_scan_schedules SET next_run_at=now()+CASE WHEN frequency='continuous' THEN make_interval(secs => $2) WHEN frequency='manual' THEN interval '100 years' WHEN frequency='daily' THEN interval '1 day' ELSE interval '7 days' END WHERE user_id=$1",
+                        [schedule.user_id, continuousScanSeconds()],
                     );
                 }
                 const running = await c.query(
@@ -125,8 +127,8 @@ export async function POST(request: Request) {
                 ],
             );
             await db.query(
-                "UPDATE security_scan_schedules SET next_run_at=now()+interval '30 seconds' WHERE user_id=$1 AND frequency='continuous'",
-                [job.user_id],
+                "UPDATE security_scan_schedules SET next_run_at=now()+make_interval(secs => $2) WHERE user_id=$1 AND frequency='continuous'",
+                [job.user_id, continuousScanSeconds()],
             );
             return Response.json({ ok: true });
         }

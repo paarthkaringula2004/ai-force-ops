@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./load-env.mjs";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { Pool } from "pg";
@@ -6,7 +7,7 @@ import ts from "typescript";
 import { readFile } from "node:fs/promises";
 const base = process.env.EPACE_TEST_URL || "http://localhost:3000",
     users = [],
-    pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    pool = new Pool({ ...postgresConnectionOptions(), max: 1 });
 async function call(cookie, path, body, expected = 200, origin = base) {
     const r = await fetch(base + path, {
         method: body === undefined ? "GET" : "POST",

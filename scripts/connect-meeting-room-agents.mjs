@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./load-env.mjs";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 import pg from "pg";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -13,7 +14,7 @@ new Function(
     }).outputText,
 )(() => ({}), m, m.exports);
 const pool = new pg.Pool({
-        connectionString: process.env.DATABASE_URL,
+        ...postgresConnectionOptions(), max: 1,
         connectionTimeoutMillis: 10000,
     }),
     client = await pool.connect();

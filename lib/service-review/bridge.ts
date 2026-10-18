@@ -85,7 +85,7 @@ async function importSnapshot(source: Source, at: string) {
             [source.id, at, readings.length],
         );
         await client.query(
-            `DELETE FROM service_review_records WHERE source_connection_id=$1 AND is_current=false AND observed_at<now()-interval '90 days'`,
+            `DELETE FROM service_review_records WHERE source_connection_id=$1 AND is_current=false AND observed_at<now()-interval '30 days'`,
             [source.id],
         );
         await client.query("COMMIT");

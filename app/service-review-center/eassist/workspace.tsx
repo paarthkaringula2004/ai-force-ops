@@ -1,5 +1,8 @@
 "use client";
 
+import { groupRepeatedAlerts, recordAlertDescription } from "@/lib/alert-groups";
+import { AlertOccurrences } from "@/components/alert-occurrences";
+
 import ThemedSelect from "@/components/themed-select";
 import { useCallback, useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 
@@ -1397,7 +1400,7 @@ export default function EAssistWorkspace({
                                                     <option value="none">No grouping</option>
                                                 </ThemedSelect>
                                                 <span className="ea-alert-count">
-                                                    {alerts.length} alerts
+                                                    {groupRepeatedAlerts(alerts, recordAlertDescription).length} alerts
                                                 </span>
                                             </div>
                                         </div>
@@ -1459,8 +1462,8 @@ export default function EAssistWorkspace({
                                                         : group}
                                                 </span>
                                                 <span className="text-xs text-slate-400">
-                                                    {items.length}{" "}
-                                                    {items.length === 1 ? "alert" : "alerts"}
+                                                    {groupRepeatedAlerts(items, recordAlertDescription).length}{" "}
+                                                    {groupRepeatedAlerts(items, recordAlertDescription).length === 1 ? "alert" : "alerts"}
                                                 </span>
                                             </button>
                                             {!collapsed.has(group) && !items.length && (
@@ -1479,7 +1482,7 @@ export default function EAssistWorkspace({
                                                 </p>
                                             )}
                                             {!collapsed.has(group) &&
-                                                items.map((a) => (
+                                                groupRepeatedAlerts(items, recordAlertDescription).map(({ item: a, members, times }) => (
                                                     <article key={a.id} className="ea-alert">
                                                         <div className="flex flex-wrap items-center gap-4">
                                                             <strong className="mr-auto text-sm">
@@ -1495,9 +1498,10 @@ export default function EAssistWorkspace({
                                                                 }
                                                             />
                                                             <span className="text-[10px] text-slate-400">
-                                                                {date(a.data.startsAt)}
+                                                                {times.length > 1 ? `${times.length} occurrences` : date(times[0] || a.data.startsAt)}
                                                             </span>
                                                         </div>
+                                                        <AlertOccurrences times={times} sources={members.map(member => `${text(member.data.resourceName) || member.external_id} (${text(member.data.state)})`)} />
                                                         <div className="my-3 flex flex-wrap gap-1.5">
                                                             {Object.entries(
                                                                 object(a.data.labels),
@@ -1618,10 +1622,12 @@ export default function EAssistWorkspace({
                                                                                     .allow_writes
                                                                             }
                                                                             onClick={() =>
-                                                                                void doAction({
-                                                                                    action: "platform.acknowledge",
-                                                                                    id: a.external_id,
-                                                                                }).then(
+                                                                                void (async () => {
+                                                                                    for (const member of members.filter(item => item.data.state === "active")) {
+                                                                                        if (!await doAction({ action: "platform.acknowledge", id: member.external_id })) return false;
+                                                                                    }
+                                                                                    return true;
+                                                                                })().then(
                                                                                     (result) => {
                                                                                         if (result)
                                                                                             setNotice(

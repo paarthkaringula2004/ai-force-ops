@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./load-env.mjs";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 import pg from "pg";
 import { randomUUID } from "node:crypto";
 const email = process.argv[2];
@@ -6,7 +7,7 @@ if (!email)
     throw new Error(
         "Supply the existing login email: node scripts/bootstrap-workspace-admin.mjs email@example.com",
     );
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+const pool = new pg.Pool({ ...postgresConnectionOptions(), max: 1 });
 const client = await pool.connect();
 try {
     await client.query("BEGIN");

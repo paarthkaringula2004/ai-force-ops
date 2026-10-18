@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import "./scripts/load-env.mjs";
 
 const nextConfig: NextConfig = {
     deploymentId: process.env.NEXT_DEPLOYMENT_ID || process.env.RENDER_GIT_COMMIT,

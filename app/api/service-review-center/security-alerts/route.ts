@@ -12,7 +12,10 @@ export async function GET(request: Request) {
     try {
         const [alerts, findings] = await Promise.all([
             db.query(
-                "SELECT id,summary,detail,severity,state,updated_at FROM platform_alerts WHERE $1::text IS NOT NULL AND (event_key LIKE 'vulnerability:%' OR event_key='security-worker' OR event_key LIKE 'security-connector:%') ORDER BY updated_at DESC LIMIT 100",
+                `SELECT a.id,a.user_id,COALESCE(a.affected_user_id,a.user_id) AS account_user_id,a.source,a.summary,a.detail,a.severity,a.state,a.updated_at,a.created_at,
+ COALESCE((SELECT array_agg(o.occurred_at ORDER BY o.occurred_at DESC) FROM platform_alert_occurrences o WHERE o.alert_id=a.id),ARRAY[a.created_at]) AS occurrence_times,
+ (SELECT f.facts->>'url' FROM vulnerability_findings f WHERE a.event_key='vulnerability:'||f.id::text) AS resource_name
+ FROM platform_alerts a WHERE $1::text IS NOT NULL AND (event_key LIKE 'vulnerability:%' OR event_key='security-worker' OR event_key LIKE 'security-connector:%') ORDER BY updated_at DESC LIMIT 1000`,
                 [user],
             ),
             db.query(

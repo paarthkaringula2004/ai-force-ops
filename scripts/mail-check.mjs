@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "./load-env.mjs";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 import nodemailer from "nodemailer";
 import pg from "pg";
 import { createCipheriv, randomBytes, randomUUID } from "node:crypto";
@@ -42,7 +43,7 @@ if (process.exitCode !== 1 && process.argv.includes("--queue-test")) {
         ),
         cipher.getAuthTag().toString("hex"),
     ].join(".");
-    const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+    const db = new pg.Pool({ ...postgresConnectionOptions(), max: 1 });
     try {
         await db.query(
             "INSERT INTO mail_outbox(id,dedupe_key,kind,recipient,subject,encrypted_content) VALUES($1,$2,'test',$3,$4,$5)",

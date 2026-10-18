@@ -2,6 +2,7 @@ import "./load-env.mjs";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import pg from "pg";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 
 const { Pool } = pg;
 const connectionString = process.env.DATABASE_URL;
@@ -10,7 +11,7 @@ if (!connectionString) {
     throw new Error("DATABASE_URL is required to run SQL migrations.");
 }
 
-const pool = new Pool({ connectionString, max: 1, connectionTimeoutMillis: 10_000 });
+const pool = new Pool({ ...postgresConnectionOptions(), max: 1, connectionTimeoutMillis: 10_000 });
 const migrationsDirectory = join(process.cwd(), "db", "migrations");
 
 try {

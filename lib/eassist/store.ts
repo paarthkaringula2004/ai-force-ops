@@ -111,6 +111,8 @@ export async function snapshot(viewer: string) {
                     ...(a.status_actor ? { statusRecordedBy: a.status_actor } : {}),
                     ...(a.resolution_note ? { resolutionEvidence: a.resolution_note } : {}),
                 },
+                occurrenceTimes: a.occurrence_times,
+                resourceName: a.resource_name,
                 startsAt: a.created_at,
                 href: a.href,
                 receiver: "Website operations",

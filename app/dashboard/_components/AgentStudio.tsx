@@ -261,12 +261,12 @@ export default function AgentStudio({
                             {currentMember?.role === "admin"
                                 ? "Admin Workspace"
                                 : currentMember?.role === "manager"
-                                  ? "Manager Workspace"
-                                  : currentMember?.role === "user"
-                                    ? "Agent Studio"
-                                    : currentMember
-                                      ? "Employee Workspace"
-                                      : "Checking access…"}
+                                    ? "Manager Workspace"
+                                    : currentMember?.role === "user"
+                                        ? "Agent Studio"
+                                        : currentMember
+                                            ? "Employee Workspace"
+                                            : "Checking access…"}
                         </div>
                         <div className="hidden text-[10px] text-[#8992a2] sm:block">
                             AIForce.Ops
@@ -279,16 +279,16 @@ export default function AgentStudio({
                             currentMember?.role === "employee"
                                 ? "Daily reset to 50 tickets · IST"
                                 : currentMember?.role === "manager"
-                                  ? "Daily reset to 100 tickets · IST"
-                                  : "Ticket allowance"
+                                    ? "Daily reset to 100 tickets · IST"
+                                    : "Ticket allowance"
                         }
                         className="mr-1 inline-flex items-center gap-1.5 rounded-full border border-[#e6e8ee] bg-[#fafbfc] px-2.5 py-1 text-[10px] font-medium text-[#6255e8]"
                     >
                         {currentMember?.role === "admin"
                             ? "Tickets: Unlimited"
                             : currentMember
-                              ? `Tickets: ${currentMember.ticket_balance ?? 0}`
-                              : "Loading tickets…"}
+                                ? `Tickets: ${currentMember.ticket_balance ?? 0}`
+                                : "Loading tickets…"}
                     </span>
                     <button
                         type="button"
@@ -444,11 +444,12 @@ export default function AgentStudio({
                 </aside>
 
                 <main className="relative flex min-w-0 flex-1 overflow-hidden bg-white">
-                    {currentMember?.active &&
-                        ["admin", "manager"].includes(currentMember.role) &&
-                        userId && <WorkspaceRequestNotifications key={userId} userId={userId} />}
                     {currentMember?.active && userId && (
-                        <WorkspaceMeetingNotifications key={userId} userId={userId} />
+                        <WorkspaceRequestNotifications userId={userId} />
+                    )}
+
+                    {currentMember?.active && userId && (
+                        <WorkspaceMeetingNotifications userId={userId} />
                     )}
                     {accessError ? (
                         <div
