@@ -1,5 +1,7 @@
-import "dotenv/config";
+import "../scripts/load-env.mjs";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 import assert from "node:assert/strict";
+import { load as loadTree } from "./helpers/load-ts.mjs";
 import pg from "pg";
 import ts from "typescript";
 import { randomUUID } from "node:crypto";
@@ -29,7 +31,8 @@ class InputError extends Error {
     }
 }
 const control = new pg.Pool({
-    connectionString: process.env.DATABASE_URL,
+    ...postgresConnectionOptions(),
+    max: 1,
     connectionTimeoutMillis: 10000,
 });
 const schema = "booking_test_" + randomUUID().replaceAll("-", "");
@@ -58,7 +61,7 @@ try {
     ])
         await control.query(`CREATE TABLE ${schema}.${name} (LIKE public.${name} INCLUDING ALL)`);
     pool = new pg.Pool({
-        connectionString: process.env.DATABASE_URL,
+        ...postgresConnectionOptions(),
         connectionTimeoutMillis: 10000,
         max: 4,
         options: `-c search_path=${schema},public`,
@@ -307,7 +310,7 @@ try {
     );
     assert.equal(result.status, 200);
     assert.equal(result.headers.get("cache-control"), "no-store");
-    const presets = load("lib/agent-studio-presets.ts", {
+    const presets = loadTree("lib/agent-studio-presets.ts", {
         "./agent-studio-graph": load("lib/agent-studio-graph.ts"),
     });
     const graph = presets.presetGraph("MeetRoom", "Custom instructions");

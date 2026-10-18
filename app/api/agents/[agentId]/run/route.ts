@@ -45,6 +45,13 @@ export async function POST(request: Request, context: { params: Promise<{ agentI
         if (typeof body.approvalToken === "string") {
             const result = await approveStudioTool(session.user.id, agentId, body.approvalToken);
             await finishPlatformRun(session.user.id, runId, true);
+            if (body.approvalToken.startsWith("dwp.")) {
+                const workplace = result.result as { reply?: string } | null;
+                return Response.json({
+                    reply: workplace?.reply || "The request was checked. Open My Requests to review its current status.",
+                    trace: [], approvals: [],
+                });
+            }
             return Response.json({
                 reply: `**${result.name}** ${"httpStatus" in result ? `returned HTTP ${result.httpStatus}` : "received a source response; review the result for completion or delivery status"}.\n\n\`\`\`json\n${JSON.stringify(result.result, null, 2).slice(0, 16000)}\n\`\`\``,
                 trace: [],

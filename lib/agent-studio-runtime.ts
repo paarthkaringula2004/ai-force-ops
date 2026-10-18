@@ -1,4 +1,5 @@
 import { readMeetingRooms } from "./meeting-rooms";
+import { readDwpTool, advanceDwpRequest, prepareDwpSubmission, confirmDwpSubmission, dwpPersonalTools } from "./dwp-tools";
 import { builtinTool } from "./builtin-project-tool-settings";
 import {
     approveIntegration,
@@ -115,6 +116,8 @@ export async function readProjectTool(user: string, name: string, request = "") 
     const settings = await builtinTool(user, name);
     request = request.trim() || settings.defaultRequest;
     if (name === "meeting_rooms") return readMeetingRooms(user, request);
+    if (["hr_knowledge", "document_links", "employee_onboarding", "workplace_services"].includes(name))
+        return readDwpTool(user, name, request);
 
     if (name === "profile")
         return (
@@ -259,6 +262,11 @@ async function executeLibraryTool(
 
 export async function approveStudioTool(user: string, agentId: string, token: string) {
     const { graph } = await loadStudioAgent(user, agentId);
+    if (token.startsWith("dwp.")) {
+        await builtinTool(user, "workplace_services");
+        return confirmDwpSubmission(user, agentId, token, graph,
+            agentReferences(graph).filter((n) => n.data.referenceKind === "builtin" && n.data.referenceId === "workplace_services").map((n) => n.id));
+    }
 
     if (token.startsWith("integration.")) {
         const { db: connectionDb } = await import("./db");
@@ -422,12 +430,13 @@ export async function runStudioAgent(
         charts: StudioChart[] = [];
 
     let calls = 0;
+    let workplaceTurn: unknown;
 
     let scanEvidence: Record<string, unknown> | undefined;
     let healthEvidence: ReturnType<typeof serviceHealthEvidence> | undefined;
     const readEvidence = async (source: string, request = "") => {
         const evidence = await readProjectTool(
-            dependencies?.sharedViewer && ["profile", "requests", "meeting_rooms"].includes(source)
+            dependencies?.sharedViewer && dwpPersonalTools.includes(source)
                 ? dependencies.sharedViewer
                 : user,
             source,
@@ -1027,7 +1036,24 @@ export async function runStudioAgent(
                             const settings = await builtinTool(user, text(node.data.referenceId));
                             args.request = args.request.trim() || settings.defaultRequest;
 
-                            if (node.data.referenceId === "chart_visualizer") {
+                            if (node.data.referenceId === "workplace_services") {
+                                if (dependencies?.sharedViewer || dependencies?.published)
+                                    output = { ...(await readEvidence("workplace_services")),
+                                        message: "Shared previews are read-only. Prepare and submit your requests in Playground." };
+                                else {
+                                    // Specialists cannot invent employee answers or process the
+                                    // same user message more than once during a model turn.
+                                    if (!workplaceTurn) {
+                                        const input = [...messages].reverse().find((m) => m.role === "user")?.content || "";
+                                        const turn = await advanceDwpRequest(user, input);
+                                        workplaceTurn = "needsApproval" in turn
+                                            ? await prepareDwpSubmission(user, agentId, node.id, graph) : turn;
+                                        const preview = workplaceTurn as { approval?: StudioApproval };
+                                        if (preview.approval) approvals.push(preview.approval);
+                                    }
+                                    output = workplaceTurn;
+                                }
+                            } else if (node.data.referenceId === "chart_visualizer") {
                                 let config;
                                 try {
                                     config = JSON.parse(args.request);

@@ -1,4 +1,5 @@
-import "dotenv/config";
+import "../scripts/load-env.mjs";
+import { postgresConnectionOptions } from "../config/postgres.mjs";
 
 import assert from "node:assert/strict";
 
@@ -11,6 +12,7 @@ import { createRequire } from "node:module";
 import ts from "typescript";
 
 import pg from "pg";
+import { load as loadTree } from "./helpers/load-ts.mjs";
 
 const require = createRequire(import.meta.url);
 
@@ -33,7 +35,7 @@ function load(path, deps = {}) {
 }
 
 const graphs = load("lib/agent-studio-graph.ts"),
-    presets = load("lib/agent-studio-presets.ts", { "./agent-studio-graph": graphs });
+    presets = loadTree("lib/agent-studio-presets.ts", { "./agent-studio-graph": graphs });
 
 const graph = graphs.studioGraph("Parent");
 
@@ -165,7 +167,7 @@ assert.match(chartMarkup, /High: 2, Low: 1/);
 assert.match(chartMarkup, /width:50%/);
 assert.match(chartMarkup, /Recorded data/);
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL }),
+const pool = new pg.Pool({ ...postgresConnectionOptions(), max: 1 }),
     c = await pool.connect(),
     db = { query: (sql, args) => c.query(sql, args) };
 
@@ -248,6 +250,7 @@ const builtinSettings = load("lib/builtin-project-tool-settings.ts", {
     }),
 });
 const runtime = load("lib/agent-studio-runtime.ts", {
+    "./dwp-tools": loadTree("lib/dwp-tools.ts", { "./db": { db }, "@/lib/db": { db } }),
     "./builtin-project-tool-settings": builtinSettings,
     "./integrations/project-tools": { resolveProjectBinding: async () => projectBindingFixture },
     "./integrations/runtime": projectRuntimeFixture,
@@ -331,7 +334,7 @@ try {
 
     await c.query("UPDATE workspace_members SET role='admin' WHERE user_id=$1", [user]);
     const initialBuiltin = await builtinSettings.builtinTools(user);
-    assert.equal(initialBuiltin.length, 8);
+    assert.equal(initialBuiltin.length, 12);
     assert.ok(initialBuiltin.every((t) => t.enabled));
     await builtinSettings.changeBuiltinTool(user, "save_builtin", {
         id: "profile",

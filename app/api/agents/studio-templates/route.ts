@@ -9,6 +9,7 @@ import {
     presetGraph,
     ensureCyberAssistTools,
     ensureMeetingRoomTool,
+    ensureDwpTools,
     type StudioPreset,
 } from "@/lib/agent-studio-presets";
 
@@ -19,6 +20,7 @@ import { workspaceAccess } from "@/lib/workspace-access";
 import { permitted } from "@/lib/workspace-permissions";
 
 import { requireSameOrigin } from "@/lib/service-review/ingestion";
+import { defaultSettings } from "@/lib/epace/types";
 
 export async function POST(request: Request) {
     const session = await getRequestSession(request);
@@ -49,6 +51,7 @@ export async function POST(request: Request) {
 
     const preset = studioPresets[body.preset as StudioPreset],
         client = await db.connect();
+    const isWorkplace = body.preset === "workplace";
 
     try {
         await client.query("BEGIN");
@@ -56,12 +59,21 @@ export async function POST(request: Request) {
         await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
             `studio-presets:${session.user.id}`,
         ]);
+        if (isWorkplace)
+            await client.query(
+                `INSERT INTO epace_projects(id,user_id,name,settings)
+                 SELECT $1,$2,'HR Collection',$3::jsonb
+                 WHERE NOT EXISTS (SELECT 1 FROM epace_projects WHERE user_id=$2
+                    AND (settings->>'dwpCollection'='true' OR lower(name)='hr collection'))`,
+                [randomUUID(), session.user.id, JSON.stringify({ ...defaultSettings, dwpCollection: true })],
+            );
 
         async function create(
             name: string,
             purpose: string,
             graph: ReturnType<typeof presetGraph>,
         ) {
+            graph = ensureDwpTools(graph, name);
             const old = await client.query(
                 `SELECT a.id,a.model_id,w.graph FROM agents a LEFT JOIN agent_workflows w ON w.user_id=a.user_id AND w.agent_id=a.id WHERE a.user_id=$1 AND a.name=$2 AND a.deleted_at IS NULL ORDER BY a.created_at LIMIT 1`,
                 [session!.user.id, name],
@@ -75,7 +87,7 @@ export async function POST(request: Request) {
                 // Reopening an installed starter never overwrites later edits.
 
                 if (
-                    row.graph?.nodes?.some(
+                    (isWorkplace && row.graph?.nodes?.length) || row.graph?.nodes?.some(
                         (n: { data?: { studioPreset?: boolean } }) => n.data?.studioPreset,
                     )
                 ) {
@@ -84,7 +96,7 @@ export async function POST(request: Request) {
                             ? ensureCyberAssistTools(row.graph)
                             : name === "MeetRoom"
                               ? ensureMeetingRoomTool(row.graph)
-                              : row.graph;
+                              : ensureDwpTools(row.graph, name);
 
                     if (upgraded !== row.graph)
                         await client.query(

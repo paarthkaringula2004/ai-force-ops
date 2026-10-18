@@ -22,6 +22,7 @@ import type { PoolClient } from "pg";
 import type { LeaveAiIntent } from "./leave-ai-intent";
 import type { ServiceIntent } from "./employee-service-ai";
 import { ticketBalance } from "./tickets";
+import { InputError } from "./eassist/transport";
 export type ServiceInterpretation = {
     intent: ServiceIntent;
     expectedDraftId: string | null;
@@ -397,6 +398,13 @@ export async function employeeReply(
     },
     service?: ServiceInterpretation,
     readOnly = false,
+    confirmedDraft?: {
+        id: string;
+        version: string;
+        approvalId: string;
+        agentId: string;
+        graph: unknown;
+    },
 ): Promise<Reply | null> {
     const member = access || (await workspaceAccess(user));
     if (!member.active || member.role === "user") return null;
@@ -429,6 +437,23 @@ export async function employeeReply(
             )
         ).rows[0];
         let draft = stored?.draft as Draft | undefined;
+        // Studio confirmations share this lock and transaction with Playground.
+        // Editing a draft, changing the graph or reusing a preview invalidates it.
+        if (confirmedDraft) {
+            if (input !== "Submit request" || draft?.id !== confirmedDraft.id ||
+                stored?.version !== confirmedDraft.version)
+                throw new InputError("Your request changed. Review a fresh preview before submitting.", 409);
+            const consumed = await client.query(
+                `UPDATE agent_tool_approvals SET consumed_at=now()
+                 WHERE id=$1 AND user_id=$2 AND agent_id=$3 AND consumed_at IS NULL
+                   AND expires_at>now() AND EXISTS (
+                       SELECT 1 FROM agent_workflows WHERE user_id=$2 AND agent_id=$3 AND graph=$4::jsonb
+                   ) RETURNING id`,
+                [confirmedDraft.approvalId, user, confirmedDraft.agentId, JSON.stringify(confirmedDraft.graph)],
+            );
+            if (!consumed.rowCount)
+                throw new InputError("This preview expired or was already used. Review the request again.", 409);
+        }
         // Route explicit top-ups before any AI-derived fields or stale service context.
         if (
             !readOnly &&
